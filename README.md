@@ -1,29 +1,93 @@
-# xk6-output-template
-Is template for k6 output [extensions](https://k6.io/docs/extensions/guides/what-are-k6-extensions/)
+# xk6-output-clickhouse
 
-You should make a repo from this template and go through the code and replace everywhere where it says `template` in order to use it.
-There are more instructions and comments inline.
-
-> :warning: the API of k6 outputs [will likely change in the future](https://github.com/grafana/k6/issues/2430), so repos using it (like this repo) are not guaranteed to be working with any future version of k6.
+A k6 extension for outputting test metrics to ClickHouse.
 
 ## Build
 
-To build a `k6` binary with this extension, first ensure you have the prerequisites:
-
-- [Go toolchain](https://go101.org/article/go-toolchain.html)
-- Git
-- [xk6](https://github.com/grafana/xk6)
-
-1. Build with `xk6`:
+Build k6 with the ClickHouse output extension:
 
 ```bash
-xk6 build --with github.com/grafana/xk6-output-template
+xk6 build --with github.com/mkutlak/xk6-output-clickhouse@latest
 ```
 
-This will result in a `k6` binary in the current directory.
+## Usage
 
-2. Run with the just build `k6:
+Run a k6 test and send metrics to ClickHouse:
 
 ```bash
-./k6 run -o xk6-template <script.js>
+./k6 run --out clickhouse=localhost:9000 script.js
 ```
+
+### Configuration
+
+Configure via JSON in your script:
+
+```javascript
+export const options = {
+    ext: {
+        clickhouse: {
+            addr: "localhost:9000",
+            database: "k6",
+            table: "samples",
+            pushInterval: "1s"
+        }
+    }
+};
+```
+
+Or via command line:
+
+```bash
+./k6 run --out clickhouse=localhost:9000?database=k6 script.js
+```
+
+### Configuration Options
+
+- `addr` - ClickHouse address (default: `localhost:9000`)
+- `database` - Database name (default: `k6`)
+- `table` - Table name (default: `samples`)
+- `pushInterval` - How often to flush metrics (default: `1s`)
+
+## Schema
+
+The extension creates a table with this structure:
+
+```sql
+CREATE TABLE k6.samples (
+    timestamp DateTime64(3),
+    metric_name LowCardinality(String),
+    metric_value Float64,
+    tags Map(String, String)
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMMDD(timestamp)
+ORDER BY (metric_name, timestamp);
+```
+
+## Querying Metrics
+
+Example queries:
+
+```sql
+-- View recent metrics
+SELECT * FROM k6.samples 
+ORDER BY timestamp DESC 
+LIMIT 100;
+
+-- Average HTTP request duration
+SELECT avg(metric_value) 
+FROM k6.samples 
+WHERE metric_name = 'http_req_duration';
+
+-- Request rate over time
+SELECT 
+    toStartOfMinute(timestamp) as time,
+    count() as requests
+FROM k6.samples 
+WHERE metric_name = 'http_reqs'
+GROUP BY time
+ORDER BY time;
+```
+
+## License
+
+Apache 2.0
