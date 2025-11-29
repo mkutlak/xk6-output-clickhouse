@@ -114,7 +114,7 @@ func (o *Output) flush() {
 	defer batch.Rollback()
 
 	stmt, err := batch.Prepare(fmt.Sprintf(`
-		INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags)
+		INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags) VALUES (?, ?, ?, ?)
 	`, o.config.Database, o.config.Table))
 	if err != nil {
 		o.logger.WithError(err).Error("Failed to prepare statement")
