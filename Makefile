@@ -1,32 +1,78 @@
-MAKEFLAGS += --silent
+.PHONY: build clean test test-coverage fmt lint vet tidy check install-tools help all
 
-all: clean format test build
+# Default target
+all: check build
 
-## help: Prints a list of available build targets.
-help:
-	echo "Usage: make <OPTIONS> ... <TARGETS>"
-	echo ""
-	echo "Available targets are:"
-	echo ''
-	sed -n 's/^##//p' ${PWD}/Makefile | column -t -s ':' | sed -e 's/^/ /'
-	echo
-	echo "Targets run by default are: `sed -n 's/^all: //p' ./Makefile | sed -e 's/ /, /g' | sed -e 's/\(.*\), /\1, and /'`"
-
-## clean: Removes any previously created build artifacts.
-clean:
-	rm -f ./k6
-
-## build: Builds a custom 'k6' with the local extension. 
+# Build the k6 binary with the extension
 build:
-	go install go.k6.io/xk6/cmd/xk6@latest
-	xk6 build --with $(shell go list -m)=.
+	@echo "Building k6 with xk6-output-clickhouse..."
+	@go mod download
+	@xk6 build --with github.com/mkutlak/xk6-output-clickhouse=.
+	@echo "Build complete: ./k6"
 
-## format: Applies Go formatting to code.
-format:
-	go fmt ./...
-
-## test: Executes any unit tests.
+# Run tests
 test:
-	go test -cover -race ./...
+	@echo "Running tests..."
+	@go test -v -race ./...
 
-.PHONY: build clean format help test
+# Run tests with coverage
+test-coverage:
+	@echo "Running tests with coverage..."
+	@go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+# Format code
+fmt:
+	@echo "Formatting code..."
+	@go fmt ./...
+
+# Run linter (requires golangci-lint)
+lint:
+	@echo "Running linter..."
+	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Run 'make install-tools' to install it." && exit 1)
+	@golangci-lint run ./...
+
+# Run go vet
+vet:
+	@echo "Running go vet..."
+	@go vet ./...
+
+# Tidy dependencies
+tidy:
+	@echo "Tidying go.mod and go.sum..."
+	@go mod tidy
+
+# Run all checks (format, vet, lint, test)
+check: fmt vet tidy test
+	@echo "All checks passed!"
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	@rm -f k6
+	@rm -f coverage.out coverage.html
+	@echo "Clean complete"
+
+# Install development tools
+install-tools:
+	@echo "Installing development tools..."
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install go.k6.io/xk6/cmd/xk6@latest
+	@echo "Tools installed"
+
+# Show help
+help:
+	@echo "Available targets:"
+	@echo "  make build          - Build k6 binary with xk6-output-clickhouse extension"
+	@echo "  make test           - Run tests"
+	@echo "  make test-coverage  - Run tests with coverage report"
+	@echo "  make fmt            - Format code"
+	@echo "  make lint           - Run golangci-lint"
+	@echo "  make vet            - Run go vet"
+	@echo "  make tidy           - Tidy go.mod and go.sum"
+	@echo "  make check          - Run all checks (fmt, vet, tidy, test)"
+	@echo "  make clean          - Remove build artifacts"
+	@echo "  make install-tools  - Install development tools"
+	@echo "  make all            - Run checks and build (default)"
+	@echo "  make help           - Show this help message"

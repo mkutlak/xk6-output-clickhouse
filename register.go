@@ -1,13 +1,12 @@
-// Package template registers the extension for output
-package template
+package clickhouse
 
 import (
-	"github.com/grafana/xk6-output-template/pkg/template"
+	"github.com/mkutlak/xk6-output-clickhouse/pkg/clickhouse"
 	"go.k6.io/k6/output"
 )
 
 func init() {
-	output.RegisterExtension("xk6-template", func(p output.Params) (output.Output, error) {
-		return template.New(p)
+	output.RegisterExtension("clickhouse", func(params output.Params) (output.Output, error) {
+		return clickhouse.New(params)
 	})
 }

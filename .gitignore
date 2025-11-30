@@ -1,19 +1,26 @@
-.idea/
-.DS_Store
+# Binaries
 k6
-
-# Binaries for programs and plugins
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
+# Test binary
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Output
 *.out
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Go workspace
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
