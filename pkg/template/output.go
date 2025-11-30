@@ -4,9 +4,8 @@ package template
 import (
 	"time"
 
-	"github.com/sirupsen/logrus"
-
 	"go.k6.io/k6/output"
+	"go.uber.org/zap"
 )
 
 // Output implements the lib.Output interface
@@ -15,7 +14,7 @@ type Output struct {
 
 	config          Config
 	periodicFlusher *output.PeriodicFlusher
-	logger          logrus.FieldLogger
+	logger          *zap.Logger
 }
 
 var _ output.WithStopWithTestError = new(Output)
@@ -28,9 +27,12 @@ func New(p output.Params) (*Output, error) {
 	}
 	// Some setupping code
 
+	// Create zap logger
+	logger, _ := zap.NewProduction()
+
 	return &Output{
 		config: conf,
-		logger: p.Logger,
+		logger: logger,
 	}, nil
 }
 
@@ -81,10 +83,15 @@ func (o *Output) flushMetrics() {
 		for _, sample := range samples {
 			// Here we actually write or accumulate to then write in batches
 			// for the template code we just ... dump some parts of it on the screen
-			o.logger.Infof("%s=%.5f,%s\n", sample.Metric.Name, sample.Value, sample.GetTags().Map())
+			o.logger.Info("metric sample",
+				zap.String("name", sample.Metric.Name),
+				zap.Float64("value", sample.Value),
+				zap.Any("tags", sample.GetTags().Map()))
 		}
 	}
 	if count > 0 {
-		o.logger.WithField("t", time.Since(start)).WithField("count", count).Debug("Wrote metrics to stdout")
+		o.logger.Debug("Wrote metrics to stdout",
+			zap.Duration("t", time.Since(start)),
+			zap.Int("count", count))
 	}
 }
