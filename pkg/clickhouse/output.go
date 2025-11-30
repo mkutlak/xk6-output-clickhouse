@@ -7,16 +7,15 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/sirupsen/logrus"
-	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
+	"go.uber.org/zap"
 )
 
 // Output implements the output.Output interface
 type Output struct {
 	output.SampleBuffer
 	config          Config
-	logger          *logrus.Entry
+	logger          *zap.Logger
 	db              *sql.DB
 	periodicFlusher *output.PeriodicFlusher
 }
@@ -28,9 +27,13 @@ func New(params output.Params) (output.Output, error) {
 		return nil, err
 	}
 
+	// Convert logrus logger to zap logger
+	// k6 uses logrus, so we need to create a new zap logger
+	logger, _ := zap.NewProduction()
+
 	return &Output{
 		config: cfg,
-		logger: params.Logger.WithField("output", "clickhouse"),
+		logger: logger.With(zap.String("output", "clickhouse")),
 	}, nil
 }
 
@@ -75,7 +78,7 @@ func (o *Output) Start() error {
 	}
 	o.periodicFlusher = pf
 
-	o.logger.WithField("interval", o.config.PushInterval).Info("Started")
+	o.logger.Info("Started", zap.Duration("interval", o.config.PushInterval))
 	return nil
 }
 
@@ -108,7 +111,7 @@ func (o *Output) flush() {
 	// Prepare batch insert
 	batch, err := o.db.Begin()
 	if err != nil {
-		o.logger.WithError(err).Error("Failed to begin batch")
+		o.logger.Error("Failed to begin batch", zap.Error(err))
 		return
 	}
 	defer batch.Rollback()
@@ -117,7 +120,7 @@ func (o *Output) flush() {
 		INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags) VALUES (?, ?, ?, ?)
 	`, o.config.Database, o.config.Table))
 	if err != nil {
-		o.logger.WithError(err).Error("Failed to prepare statement")
+		o.logger.Error("Failed to prepare statement", zap.Error(err))
 		return
 	}
 	defer stmt.Close()
@@ -139,7 +142,7 @@ func (o *Output) flush() {
 				tags,
 			)
 			if err != nil {
-				o.logger.WithError(err).Error("Failed to insert sample")
+				o.logger.Error("Failed to insert sample", zap.Error(err))
 				continue
 			}
 			count++
@@ -147,12 +150,11 @@ func (o *Output) flush() {
 	}
 
 	if err := batch.Commit(); err != nil {
-		o.logger.WithError(err).Error("Failed to commit batch")
+		o.logger.Error("Failed to commit batch", zap.Error(err))
 		return
 	}
 
-	o.logger.WithFields(logrus.Fields{
-		"samples": count,
-		"elapsed": time.Since(start),
-	}).Debug("Flushed metrics")
+	o.logger.Debug("Flushed metrics",
+		zap.Int("samples", count),
+		zap.Duration("elapsed", time.Since(start)))
 }
