@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+README.md
+LICENSE
+*.md
+
+# IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+k6
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Examples and tests (if not needed in container)
+examples/
+
+# Build files
+Dockerfile
+.dockerignore
+Makefile
+
+# CI/CD
+.github/
+
+# Misc
+grafana-xk6-output-influxdb.txt
+modtools_frozen.yml

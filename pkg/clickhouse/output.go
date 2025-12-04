@@ -51,8 +51,8 @@ func (o *Output) Start() error {
 		Addr: []string{o.config.Addr},
 		Auth: clickhouse.Auth{
 			Database: o.config.Database,
-			Username: "default",
-			Password: "",
+			Username: o.config.User,
+			Password: o.config.Password,
 		},
 	})
 

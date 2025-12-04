@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
 	"go.k6.io/k6/output"
@@ -12,6 +13,8 @@ import (
 // Config holds the ClickHouse output configuration
 type Config struct {
 	Addr         string
+	User         string
+	Password     string
 	Database     string
 	Table        string
 	PushInterval time.Duration
@@ -21,6 +24,8 @@ type Config struct {
 func NewConfig() Config {
 	return Config{
 		Addr:         "localhost:9000",
+		User:         "default",
+		Password:     "",
 		Database:     "k6",
 		Table:        "samples",
 		PushInterval: 1 * time.Second,
@@ -35,6 +40,8 @@ func ParseConfig(params output.Params) (Config, error) {
 	if params.JSONConfig != nil {
 		jsonConf := struct {
 			Addr         string `json:"addr"`
+			User         string `json:"user"`
+			Password     string `json:"password"`
 			Database     string `json:"database"`
 			Table        string `json:"table"`
 			PushInterval string `json:"pushInterval"`
@@ -46,6 +53,12 @@ func ParseConfig(params output.Params) (Config, error) {
 
 		if jsonConf.Addr != "" {
 			cfg.Addr = jsonConf.Addr
+		}
+		if jsonConf.User != "" {
+			cfg.User = jsonConf.User
+		}
+		if jsonConf.Password != "" {
+			cfg.Password = jsonConf.Password
 		}
 		if jsonConf.Database != "" {
 			cfg.Database = jsonConf.Database
@@ -73,6 +86,12 @@ func ParseConfig(params output.Params) (Config, error) {
 			}
 
 			q := u.Query()
+			if user := q.Get("user"); user != "" {
+				cfg.User = user
+			}
+			if password := q.Get("password"); password != "" {
+				cfg.Password = password
+			}
 			if db := q.Get("database"); db != "" {
 				cfg.Database = db
 			}
@@ -80,6 +99,23 @@ func ParseConfig(params output.Params) (Config, error) {
 				cfg.Table = table
 			}
 		}
+	}
+
+	// Parse environment variables (highest priority)
+	if addr := os.Getenv("K6_CLICKHOUSE_ADDR"); addr != "" {
+		cfg.Addr = addr
+	}
+	if user := os.Getenv("K6_CLICKHOUSE_USER"); user != "" {
+		cfg.User = user
+	}
+	if password := os.Getenv("K6_CLICKHOUSE_PASSWORD"); password != "" {
+		cfg.Password = password
+	}
+	if db := os.Getenv("K6_CLICKHOUSE_DB"); db != "" {
+		cfg.Database = db
+	}
+	if table := os.Getenv("K6_CLICKHOUSE_TABLE"); table != "" {
+		cfg.Table = table
 	}
 
 	return cfg, nil

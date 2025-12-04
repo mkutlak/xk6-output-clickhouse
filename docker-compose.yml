@@ -1,0 +1,83 @@
+services:
+  # clickhouse:
+  #   image: clickhouse/clickhouse-server:latest
+  #   container_name: xk6-clickhouse
+  #   ports:
+  #     - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+  #     - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+  #   environment:
+  #     CLICKHOUSE_DB: ${CLICKHOUSE_DB:-k6}
+  #     CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+  #     CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+  #     CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: ${CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT:-1}
+  #   volumes:
+  #     - clickhouse_data:/var/lib/clickhouse
+  #     - clickhouse_logs:/var/log/clickhouse-server
+  #   healthcheck:
+  #     test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - k6-network
+
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: xk6-grafana
+  #   ports:
+  #     - "${GRAFANA_PORT:-3000}:3000"
+  #   environment:
+  #     GF_AUTH_ANONYMOUS_ENABLED: ${GF_AUTH_ANONYMOUS_ENABLED:-true}
+  #     GF_AUTH_ANONYMOUS_ORG_ROLE: ${GF_AUTH_ANONYMOUS_ORG_ROLE:-Admin}
+  #     GF_AUTH_DISABLE_LOGIN_FORM: ${GF_AUTH_DISABLE_LOGIN_FORM:-false}
+  #     GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+  #     GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #     - grafana_provisioning:/etc/grafana/provisioning
+  #   depends_on:
+  #     clickhouse:
+  #       condition: service_healthy
+  #   networks:
+  #     - k6-network
+
+  k6:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    image: xk6-output-clickhouse:latest
+    container_name: xk6-runner
+    # depends_on:
+    #   clickhouse:
+    #     condition: service_healthy
+    environment:
+      K6_OUT: ${K6_OUT:-clickhouse=http://0.0.0.0:8123/k6?dial_timeout=10s&max_open_conns=10}
+      K6_CLICKHOUSE_ADDR: ${K6_CLICKHOUSE_ADDR:-http://0.0.0.0:8123}
+      K6_CLICKHOUSE_DB: ${K6_CLICKHOUSE_DB:-k6}
+      K6_CLICKHOUSE_USER: ${K6_CLICKHOUSE_USER:-default}
+      K6_CLICKHOUSE_PASSWORD: ${K6_CLICKHOUSE_PASSWORD:-}
+    volumes:
+      - ./examples:/home/k6/examples:ro
+      - k6_results:/home/k6/results
+    network_mode: "host"
+    # Override the entrypoint to keep container running
+    # or specify the script to run
+    command: run /home/k6/examples/simple.js
+    profiles:
+      - test
+
+volumes:
+  clickhouse_data:
+    driver: local
+  clickhouse_logs:
+    driver: local
+  grafana_data:
+    driver: local
+  grafana_provisioning:
+    driver: local
+  k6_results:
+    driver: local
+
+# networks:
+#   k6-network:
+#     driver: bridge
