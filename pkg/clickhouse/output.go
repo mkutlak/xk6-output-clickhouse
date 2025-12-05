@@ -4,12 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"go.k6.io/k6/output"
 	"go.uber.org/zap"
 )
+
+// escapeIdentifier escapes a ClickHouse identifier with backticks
+func escapeIdentifier(name string) string {
+	return "`" + name + "`"
+}
 
 // Output implements the output.Output interface
 type Output struct {
@@ -18,6 +24,11 @@ type Output struct {
 	logger          *zap.Logger
 	db              *sql.DB
 	periodicFlusher *output.PeriodicFlusher
+	insertQuery     string // Pre-computed INSERT query
+
+	// Concurrency control
+	mu     sync.RWMutex
+	closed bool
 }
 
 // New creates a new ClickHouse output
@@ -29,7 +40,10 @@ func New(params output.Params) (output.Output, error) {
 
 	// Convert logrus logger to zap logger
 	// k6 uses logrus, so we need to create a new zap logger
-	logger, _ := zap.NewProduction()
+	logger, err := zap.NewProduction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logger: %w", err)
+	}
 
 	return &Output{
 		config: cfg,
@@ -44,6 +58,13 @@ func (o *Output) Description() string {
 
 // Start initializes the connection and starts the flusher
 func (o *Output) Start() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.closed {
+		return fmt.Errorf("output already closed")
+	}
+
 	o.logger.Debug("Starting ClickHouse output")
 
 	// Connect to ClickHouse
@@ -78,6 +99,23 @@ func (o *Output) Start() error {
 		o.logger.Info("Schema creation skipped")
 	}
 
+	// Pre-compute INSERT query to avoid allocations on every flush
+	if o.config.SchemaMode == "compatible" {
+		o.insertQuery = fmt.Sprintf(`
+			INSERT INTO %s.%s (
+				timestamp, build_id, release, version, branch,
+				metric_name, metric_type, value, testid,
+				ui_feature, scenario, name, method, status,
+				expected_response, error_code, rating, resource_type,
+				check_name, group_name, extra_tags
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, escapeIdentifier(o.config.Database), escapeIdentifier(o.config.Table))
+	} else {
+		o.insertQuery = fmt.Sprintf(`
+			INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags) VALUES (?, ?, ?, ?)
+		`, escapeIdentifier(o.config.Database), escapeIdentifier(o.config.Table))
+	}
+
 	// Start periodic flusher
 	pf, err := output.NewPeriodicFlusher(o.config.PushInterval, o.flush)
 	if err != nil {
@@ -91,11 +129,22 @@ func (o *Output) Start() error {
 
 // Stop flushes remaining metrics and closes the connection
 func (o *Output) Stop() error {
+	o.mu.Lock()
+	if o.closed {
+		o.mu.Unlock()
+		return nil // Already stopped
+	}
+	o.closed = true
+	o.mu.Unlock()
+
 	o.logger.Debug("Stopping")
 
 	if o.periodicFlusher != nil {
 		o.periodicFlusher.Stop()
 	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
 	if o.db != nil {
 		o.db.Close()
@@ -107,6 +156,19 @@ func (o *Output) Stop() error {
 
 // flush writes buffered samples to ClickHouse
 func (o *Output) flush() {
+	o.mu.RLock()
+	if o.closed {
+		o.mu.RUnlock()
+		return
+	}
+
+	// Capture state under lock
+	db := o.db
+	insertQuery := o.insertQuery
+	config := o.config
+	logger := o.logger
+	o.mu.RUnlock()
+
 	samples := o.GetBufferedSamples()
 	if len(samples) == 0 {
 		return
@@ -116,34 +178,16 @@ func (o *Output) flush() {
 	ctx := context.Background()
 
 	// Prepare batch insert
-	batch, err := o.db.Begin()
+	batch, err := db.Begin()
 	if err != nil {
-		o.logger.Error("Failed to begin batch", zap.Error(err))
+		logger.Error("Failed to begin batch", zap.Error(err))
 		return
 	}
 	defer batch.Rollback()
 
-	// Use appropriate INSERT query based on schema mode
-	var insertQuery string
-	if o.config.SchemaMode == "compatible" {
-		insertQuery = fmt.Sprintf(`
-			INSERT INTO %s.%s (
-				timestamp, build_id, release, version, branch,
-				metric_name, metric_type, value, testid,
-				ui_feature, scenario, name, method, status,
-				expected_response, error_code, rating, resource_type,
-				check_name, group_name, extra_tags
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, o.config.Database, o.config.Table)
-	} else {
-		insertQuery = fmt.Sprintf(`
-			INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags) VALUES (?, ?, ?, ?)
-		`, o.config.Database, o.config.Table)
-	}
-
 	stmt, err := batch.Prepare(insertQuery)
 	if err != nil {
-		o.logger.Error("Failed to prepare statement", zap.Error(err))
+		logger.Error("Failed to prepare statement", zap.Error(err))
 		return
 	}
 	defer stmt.Close()
@@ -153,7 +197,7 @@ func (o *Output) flush() {
 		for _, sample := range container.GetSamples() {
 			var err error
 
-			if o.config.SchemaMode == "compatible" {
+			if config.SchemaMode == "compatible" {
 				cs := ConvertToCompatible(sample)
 				_, err = stmt.ExecContext(ctx,
 					cs.Timestamp, cs.BuildID, cs.Release, cs.Version, cs.Branch,
@@ -173,7 +217,7 @@ func (o *Output) flush() {
 			}
 
 			if err != nil {
-				o.logger.Error("Failed to insert sample", zap.Error(err))
+				logger.Error("Failed to insert sample", zap.Error(err))
 				continue
 			}
 			count++
@@ -181,11 +225,11 @@ func (o *Output) flush() {
 	}
 
 	if err := batch.Commit(); err != nil {
-		o.logger.Error("Failed to commit batch", zap.Error(err))
+		logger.Error("Failed to commit batch", zap.Error(err))
 		return
 	}
 
-	o.logger.Debug("Flushed metrics",
+	logger.Debug("Flushed metrics",
 		zap.Int("samples", count),
 		zap.Duration("elapsed", time.Since(start)))
 }

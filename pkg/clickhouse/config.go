@@ -5,10 +5,20 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"time"
 
 	"go.k6.io/k6/output"
 )
+
+// validIdentifierRegex matches valid ClickHouse identifiers
+// Alphanumeric + underscore, 1-63 characters
+var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z0-9_]{1,63}$`)
+
+// isValidIdentifier validates ClickHouse identifier names
+func isValidIdentifier(name string) bool {
+	return validIdentifierRegex.MatchString(name)
+}
 
 // Config holds the ClickHouse output configuration
 type Config struct {
@@ -20,6 +30,39 @@ type Config struct {
 	PushInterval       time.Duration
 	SchemaMode         string
 	SkipSchemaCreation bool
+}
+
+// Validate checks the configuration for validity
+func (c Config) Validate() error {
+	if c.Addr == "" {
+		return fmt.Errorf("clickhouse address is required")
+	}
+
+	if c.Database == "" {
+		return fmt.Errorf("clickhouse database name is required")
+	}
+
+	if !isValidIdentifier(c.Database) {
+		return fmt.Errorf("invalid database name: %s (must be alphanumeric + underscore, max 63 chars)", c.Database)
+	}
+
+	if c.Table == "" {
+		return fmt.Errorf("clickhouse table name is required")
+	}
+
+	if !isValidIdentifier(c.Table) {
+		return fmt.Errorf("invalid table name: %s (must be alphanumeric + underscore, max 63 chars)", c.Table)
+	}
+
+	if c.PushInterval <= 0 {
+		return fmt.Errorf("push interval must be positive, got %v", c.PushInterval)
+	}
+
+	if c.SchemaMode != "simple" && c.SchemaMode != "compatible" {
+		return fmt.Errorf("invalid schemaMode: %s (must be 'simple' or 'compatible')", c.SchemaMode)
+	}
+
+	return nil
 }
 
 // NewConfig returns a Config with default values
@@ -142,9 +185,9 @@ func ParseConfig(params output.Params) (Config, error) {
 		cfg.SkipSchemaCreation = true
 	}
 
-	// Validate schema mode
-	if cfg.SchemaMode != "simple" && cfg.SchemaMode != "compatible" {
-		return cfg, fmt.Errorf("invalid schemaMode: %s (must be 'simple' or 'compatible')", cfg.SchemaMode)
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return cfg, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return cfg, nil
