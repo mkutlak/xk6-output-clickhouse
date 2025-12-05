@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -60,7 +61,7 @@ func ConvertToSimple(ctx context.Context, sample metrics.Sample) SimpleSample {
 }
 
 // ConvertToCompatible converts a k6 sample to the compatible schema format
-func ConvertToCompatible(ctx context.Context, sample metrics.Sample) CompatibleSample {
+func ConvertToCompatible(ctx context.Context, sample metrics.Sample) (CompatibleSample, error) {
 	cs := CompatibleSample{
 		Timestamp:        sample.Time,
 		MetricName:       sample.Metric.Name,
@@ -87,6 +88,8 @@ func ConvertToCompatible(ctx context.Context, sample metrics.Sample) CompatibleS
 		if buildID, ok := getAndDelete(tagMap, "build_id"); ok {
 			if id, err := strconv.ParseUint(buildID, 10, 32); err == nil {
 				cs.BuildID = uint32(id)
+			} else {
+				return cs, fmt.Errorf("failed to parse build_id: %w", err)
 			}
 		}
 		// If not set from tags, generate from timestamp
@@ -118,6 +121,8 @@ func ConvertToCompatible(ctx context.Context, sample metrics.Sample) CompatibleS
 		if statusStr, ok := getAndDelete(tagMap, "status"); ok {
 			if statusInt, err := strconv.ParseUint(statusStr, 10, 16); err == nil {
 				cs.Status = uint16(statusInt)
+			} else {
+				return cs, fmt.Errorf("failed to parse status: %w", err)
 			}
 		}
 
@@ -135,7 +140,7 @@ func ConvertToCompatible(ctx context.Context, sample metrics.Sample) CompatibleS
 		cs.Branch = "master"
 	}
 
-	return cs
+	return cs, nil
 }
 
 // mapMetricType maps k6 metric type to ClickHouse enum value

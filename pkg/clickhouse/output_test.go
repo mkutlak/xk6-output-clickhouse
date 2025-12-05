@@ -52,7 +52,7 @@ func TestNew(t *testing.T) {
 				JSONConfig: []byte(`{invalid`),
 			},
 			expectError:   true,
-			errorContains: "failed to parse JSON config",
+			errorContains: "failed to parse json config",
 		},
 		{
 			name: "invalid pushInterval in json",
@@ -101,8 +101,8 @@ func TestNew_ConfigParsing(t *testing.T) {
 		params := output.Params{
 			JSONConfig: mustMarshalJSON(map[string]interface{}{
 				"addr":         "test-host:9000",
-				"database":     "test-db",
-				"table":        "test-table",
+				"database":     "test_db",
+				"table":        "test_table",
 				"pushInterval": "10s",
 			}),
 		}
@@ -113,8 +113,8 @@ func TestNew_ConfigParsing(t *testing.T) {
 
 		clickhouseOut := out.(*Output)
 		assert.Equal(t, "test-host:9000", clickhouseOut.config.Addr)
-		assert.Equal(t, "test-db", clickhouseOut.config.Database)
-		assert.Equal(t, "test-table", clickhouseOut.config.Table)
+		assert.Equal(t, "test_db", clickhouseOut.config.Database)
+		assert.Equal(t, "test_table", clickhouseOut.config.Table)
 		assert.Equal(t, 10*time.Second, clickhouseOut.config.PushInterval)
 	})
 }
@@ -642,8 +642,8 @@ func TestOutput_ConfigurationValidation(t *testing.T) {
 		params := output.Params{
 			JSONConfig: mustMarshalJSON(map[string]interface{}{
 				"addr":         "test-host:9000",
-				"database":     "test-db",
-				"table":        "test-table",
+				"database":     "test_db",
+				"table":        "test_table",
 				"pushInterval": "5s",
 			}),
 		}
@@ -654,8 +654,8 @@ func TestOutput_ConfigurationValidation(t *testing.T) {
 		clickhouseOut := out.(*Output)
 
 		assert.Equal(t, "test-host:9000", clickhouseOut.config.Addr)
-		assert.Equal(t, "test-db", clickhouseOut.config.Database)
-		assert.Equal(t, "test-table", clickhouseOut.config.Table)
+		assert.Equal(t, "test_db", clickhouseOut.config.Database)
+		assert.Equal(t, "test_table", clickhouseOut.config.Table)
 		assert.Equal(t, 5*time.Second, clickhouseOut.config.PushInterval)
 	})
 }

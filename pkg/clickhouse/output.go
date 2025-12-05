@@ -79,7 +79,7 @@ func (o *Output) Start() error {
 
 	// Test connection
 	if err := db.Ping(); err != nil {
-		return fmt.Errorf("failed to ping ClickHouse: %w", err)
+		return fmt.Errorf("failed to ping clickhouse: %w", err)
 	}
 
 	o.db = db
@@ -198,7 +198,11 @@ func (o *Output) flush() {
 			var err error
 
 			if config.SchemaMode == "compatible" {
-				cs := ConvertToCompatible(ctx, sample)
+				cs, err := ConvertToCompatible(ctx, sample)
+				if err != nil {
+					logger.Error("failed to convert to compatible schema", zap.Error(err))
+					continue
+				}
 				_, err = stmt.ExecContext(ctx,
 					cs.Timestamp, cs.BuildID, cs.Release, cs.Version, cs.Branch,
 					cs.MetricName, cs.MetricType, cs.Value, cs.TestID,

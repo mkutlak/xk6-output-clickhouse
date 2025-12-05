@@ -136,7 +136,7 @@ func ParseConfig(params output.Params) (Config, error) {
 		}{}
 
 		if err := json.Unmarshal(params.JSONConfig, &jsonConf); err != nil {
-			return cfg, fmt.Errorf("failed to parse JSON config: %w", err)
+			return cfg, fmt.Errorf("failed to parse json config: %w", err)
 		}
 
 		if jsonConf.Addr != "" {

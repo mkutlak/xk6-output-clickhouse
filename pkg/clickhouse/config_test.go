@@ -145,7 +145,7 @@ func TestParseConfig(t *testing.T) {
 				JSONConfig: []byte(`{invalid json`),
 			},
 			expectError:   true,
-			errorContains: "failed to parse JSON config",
+			errorContains: "failed to parse json config",
 		},
 		{
 			name: "invalid pushInterval format",
@@ -298,11 +298,11 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "url config with special characters in query",
 			params: output.Params{
-				ConfigArgument: "localhost:9000?database=k6-test&table=samples_2024",
+				ConfigArgument: "localhost:9000?database=k6_test&table=samples_2024",
 			},
 			expectedConfig: Config{
 				Addr:         "localhost:9000",
-				Database:     "k6-test",
+				Database:     "k6_test",
 				Table:        "samples_2024",
 				PushInterval: 1 * time.Second,
 			},
@@ -315,13 +315,8 @@ func TestParseConfig(t *testing.T) {
 					"pushInterval": "0s",
 				}),
 			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 0,
-			},
-			expectError: false,
+			expectError:   true,
+			errorContains: "push interval must be positive",
 		},
 		{
 			name: "json config with negative pushInterval",
@@ -330,13 +325,8 @@ func TestParseConfig(t *testing.T) {
 					"pushInterval": "-5s",
 				}),
 			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: -5 * time.Second,
-			},
-			expectError: false,
+			expectError:   true,
+			errorContains: "push interval must be positive",
 		},
 		{
 			name: "url config with IPv6 address (no scheme)",
