@@ -21,14 +21,53 @@ func isValidIdentifier(name string) bool {
 }
 
 // Config holds the ClickHouse output configuration
+//
+// Default values:
+//   - Addr: "localhost:9000"
+//   - User: "default"
+//   - Password: "" (empty)
+//   - Database: "k6"
+//   - Table: "samples"
+//   - PushInterval: 1s
+//   - SchemaMode: "simple"
+//   - SkipSchemaCreation: false
+//
+// Configuration sources (in priority order):
+//  1. Environment variables (K6_CLICKHOUSE_*)
+//  2. URL parameters (e.g. --out clickhouse=...?param=value)
+//  3. JSON config (in script options)
+//  4. Default values
 type Config struct {
-	Addr               string
-	User               string
-	Password           string
-	Database           string
-	Table              string
-	PushInterval       time.Duration
-	SchemaMode         string
+	// Addr is the ClickHouse server address (host:port).
+	// Env: K6_CLICKHOUSE_ADDR
+	Addr string
+
+	// User is the ClickHouse username.
+	// Env: K6_CLICKHOUSE_USER
+	User string
+
+	// Password is the ClickHouse password.
+	// Env: K6_CLICKHOUSE_PASSWORD
+	Password string
+
+	// Database is the database name to store metrics.
+	// Env: K6_CLICKHOUSE_DB
+	Database string
+
+	// Table is the table name to store metrics.
+	// Env: K6_CLICKHOUSE_TABLE
+	Table string
+
+	// PushInterval is how often to flush metrics to ClickHouse.
+	// Env: K6_CLICKHOUSE_PUSH_INTERVAL (parsed as duration, e.g. "1s")
+	PushInterval time.Duration
+
+	// SchemaMode determines the table schema ("simple" or "compatible").
+	// Env: K6_CLICKHOUSE_SCHEMA_MODE
+	SchemaMode string
+
+	// SkipSchemaCreation disables automatic database and table creation.
+	// Env: K6_CLICKHOUSE_SKIP_SCHEMA_CREATION ("true" to skip)
 	SkipSchemaCreation bool
 }
 

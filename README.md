@@ -43,10 +43,16 @@ Or via command line:
 
 ### Configuration Options
 
-- `addr` - ClickHouse address (default: `localhost:9000`)
-- `database` - Database name (default: `k6`)
-- `table` - Table name (default: `samples`)
-- `pushInterval` - How often to flush metrics (default: `1s`)
+| Option | Environment Variable | Default | Description |
+|--------|----------------------|---------|-------------|
+| `addr` | `K6_CLICKHOUSE_ADDR` | `localhost:9000` | ClickHouse server address |
+| `user` | `K6_CLICKHOUSE_USER` | `default` | Database username |
+| `password` | `K6_CLICKHOUSE_PASSWORD` | `""` | Database password |
+| `database` | `K6_CLICKHOUSE_DB` | `k6` | Database name |
+| `table` | `K6_CLICKHOUSE_TABLE` | `samples` | Table name |
+| `pushInterval` | `K6_CLICKHOUSE_PUSH_INTERVAL` | `1s` | Flush interval (e.g., "1s", "500ms") |
+| `schemaMode` | `K6_CLICKHOUSE_SCHEMA_MODE` | `simple` | Schema mode: `simple` (recommended) or `compatible` (legacy) |
+| `skipSchemaCreation` | `K6_CLICKHOUSE_SKIP_SCHEMA_CREATION` | `false` | Set to `true` to skip DB/Table creation |
 
 ## Schema
 

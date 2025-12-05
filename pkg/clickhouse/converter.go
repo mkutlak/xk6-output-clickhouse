@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"context"
 	"strconv"
 	"time"
 
@@ -41,7 +42,7 @@ type CompatibleSample struct {
 }
 
 // ConvertToSimple converts a k6 sample to the simple schema format
-func ConvertToSimple(sample metrics.Sample) SimpleSample {
+func ConvertToSimple(ctx context.Context, sample metrics.Sample) SimpleSample {
 	ss := SimpleSample{
 		Timestamp:   sample.Time,
 		MetricName:  sample.Metric.Name,
@@ -59,7 +60,7 @@ func ConvertToSimple(sample metrics.Sample) SimpleSample {
 }
 
 // ConvertToCompatible converts a k6 sample to the compatible schema format
-func ConvertToCompatible(sample metrics.Sample) CompatibleSample {
+func ConvertToCompatible(ctx context.Context, sample metrics.Sample) CompatibleSample {
 	cs := CompatibleSample{
 		Timestamp:        sample.Time,
 		MetricName:       sample.Metric.Name,

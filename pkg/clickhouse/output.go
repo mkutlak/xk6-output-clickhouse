@@ -198,7 +198,7 @@ func (o *Output) flush() {
 			var err error
 
 			if config.SchemaMode == "compatible" {
-				cs := ConvertToCompatible(sample)
+				cs := ConvertToCompatible(ctx, sample)
 				_, err = stmt.ExecContext(ctx,
 					cs.Timestamp, cs.BuildID, cs.Release, cs.Version, cs.Branch,
 					cs.MetricName, cs.MetricType, cs.Value, cs.TestID,
@@ -207,7 +207,7 @@ func (o *Output) flush() {
 					cs.CheckName, cs.GroupName, cs.ExtraTags,
 				)
 			} else {
-				ss := ConvertToSimple(sample)
+				ss := ConvertToSimple(ctx, sample)
 				_, err = stmt.ExecContext(ctx,
 					ss.Timestamp,
 					ss.MetricName,
