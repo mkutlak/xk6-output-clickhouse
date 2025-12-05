@@ -65,6 +65,10 @@ type Output struct {
 	// Concurrency control
 	mu     sync.RWMutex
 	closed bool
+
+	// Context cancellation for graceful shutdown
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // New creates a new ClickHouse output
@@ -100,6 +104,9 @@ func (o *Output) Start() error {
 	if o.closed {
 		return fmt.Errorf("output already closed")
 	}
+
+	// Create cancellable context for graceful shutdown
+	o.shutdownCtx, o.shutdownCancel = context.WithCancel(context.Background())
 
 	o.logger.Debug("Starting ClickHouse output")
 
@@ -198,6 +205,11 @@ func (o *Output) Stop() error {
 
 	o.logger.Debug("Stopping")
 
+	// Cancel all flushes to enable graceful shutdown
+	if o.shutdownCancel != nil {
+		o.shutdownCancel()
+	}
+
 	if o.periodicFlusher != nil {
 		o.periodicFlusher.Stop()
 	}
@@ -226,6 +238,7 @@ func (o *Output) flush() {
 	insertQuery := o.insertQuery
 	config := o.config
 	logger := o.logger
+	ctx := o.shutdownCtx
 	o.mu.RUnlock()
 
 	samples := o.GetBufferedSamples()
@@ -234,7 +247,6 @@ func (o *Output) flush() {
 	}
 
 	start := time.Now()
-	ctx := context.Background()
 
 	// Prepare batch insert
 	batch, err := db.Begin()
