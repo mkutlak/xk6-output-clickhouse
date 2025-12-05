@@ -13,6 +13,41 @@ import (
 	"go.uber.org/zap"
 )
 
+// Memory pools for reducing allocations during high-throughput operations
+var (
+	// tagMapPool reuses map[string]string for tag storage
+	// Maps are cleared before returning to pool to prevent memory leaks
+	tagMapPool = sync.Pool{
+		New: func() interface{} {
+			return make(map[string]string)
+		},
+	}
+
+	// compatibleRowPool reuses []interface{} slices for compatible schema rows (21 fields)
+	// Pre-sized to avoid slice growth during append operations
+	compatibleRowPool = sync.Pool{
+		New: func() interface{} {
+			return make([]interface{}, 21)
+		},
+	}
+
+	// simpleRowPool reuses []interface{} slices for simple schema rows (4 fields)
+	// Pre-sized to match simple schema field count
+	simpleRowPool = sync.Pool{
+		New: func() interface{} {
+			return make([]interface{}, 4)
+		},
+	}
+)
+
+// clearMap efficiently clears a map while retaining its allocated capacity
+// This avoids map reallocations when the map is reused from the pool
+func clearMap(m map[string]string) {
+	for k := range m {
+		delete(m, k)
+	}
+}
+
 // escapeIdentifier escapes a ClickHouse identifier with backticks
 func escapeIdentifier(name string) string {
 	return "`" + name + "`"
@@ -217,35 +252,97 @@ func (o *Output) flush() {
 	defer stmt.Close()
 
 	count := 0
+	totalSamples := 0
+
+	// Calculate total samples for progress tracking
+	for _, container := range samples {
+		totalSamples += len(container.GetSamples())
+	}
+
 	for _, container := range samples {
 		for _, sample := range container.GetSamples() {
-			var err error
-
-			if config.SchemaMode == "compatible" {
-				cs, err := ConvertToCompatible(ctx, sample)
-				if err != nil {
-					logger.Error("failed to convert to compatible schema", zap.Error(err))
-					continue
+			// Check for context cancellation every 1000 samples
+			// Use non-blocking select for optimal performance
+			if count%1000 == 0 {
+				select {
+				case <-ctx.Done():
+					logger.Warn("Flush cancelled by context",
+						zap.Int("processed", count),
+						zap.Int("total", totalSamples),
+						zap.Error(ctx.Err()))
+					return
+				default:
+					// Continue processing
 				}
-				_, err = stmt.ExecContext(ctx,
-					cs.Timestamp, cs.BuildID, cs.Release, cs.Version, cs.Branch,
-					cs.MetricName, cs.MetricType, cs.Value, cs.TestID,
-					cs.UIFeature, cs.Scenario, cs.Name, cs.Method, cs.Status,
-					cs.ExpectedResponse, cs.ErrorCode, cs.Rating, cs.ResourceType,
-					cs.CheckName, cs.GroupName, cs.ExtraTags,
-				)
-			} else {
-				ss := ConvertToSimple(ctx, sample)
-				_, err = stmt.ExecContext(ctx,
-					ss.Timestamp,
-					ss.MetricName,
-					ss.MetricValue,
-					ss.Tags,
-				)
 			}
 
-			if err != nil {
-				logger.Error("Failed to insert sample", zap.Error(err))
+			var execErr error
+
+			if config.SchemaMode == "compatible" {
+				cs, convErr := ConvertToCompatible(ctx, sample)
+				if convErr != nil {
+					logger.Error("failed to convert to compatible schema", zap.Error(convErr))
+					// Return tag map to pool even on error
+					tagMapPool.Put(cs.ExtraTags)
+					continue
+				}
+
+				// Get row buffer from pool
+				row := compatibleRowPool.Get().([]interface{})
+
+				// Populate row buffer with sample data
+				row[0] = cs.Timestamp
+				row[1] = cs.BuildID
+				row[2] = cs.Release
+				row[3] = cs.Version
+				row[4] = cs.Branch
+				row[5] = cs.MetricName
+				row[6] = cs.MetricType
+				row[7] = cs.Value
+				row[8] = cs.TestID
+				row[9] = cs.UIFeature
+				row[10] = cs.Scenario
+				row[11] = cs.Name
+				row[12] = cs.Method
+				row[13] = cs.Status
+				row[14] = cs.ExpectedResponse
+				row[15] = cs.ErrorCode
+				row[16] = cs.Rating
+				row[17] = cs.ResourceType
+				row[18] = cs.CheckName
+				row[19] = cs.GroupName
+				row[20] = cs.ExtraTags
+
+				_, execErr = stmt.ExecContext(ctx, row...)
+
+				// Return pooled resources for reuse
+				// Row buffer is always returned
+				compatibleRowPool.Put(row)
+				// Tag map is returned after ExecContext completes
+				tagMapPool.Put(cs.ExtraTags)
+			} else {
+				ss := ConvertToSimple(ctx, sample)
+
+				// Get row buffer from pool
+				row := simpleRowPool.Get().([]interface{})
+
+				// Populate row buffer with sample data
+				row[0] = ss.Timestamp
+				row[1] = ss.MetricName
+				row[2] = ss.MetricValue
+				row[3] = ss.Tags
+
+				_, execErr = stmt.ExecContext(ctx, row...)
+
+				// Return pooled resources for reuse
+				// Row buffer is always returned
+				simpleRowPool.Put(row)
+				// Tag map is returned after ExecContext completes
+				tagMapPool.Put(ss.Tags)
+			}
+
+			if execErr != nil {
+				logger.Error("Failed to insert sample", zap.Error(execErr))
 				continue
 			}
 			count++

@@ -44,11 +44,15 @@ type CompatibleSample struct {
 
 // ConvertToSimple converts a k6 sample to the simple schema format
 func ConvertToSimple(ctx context.Context, sample metrics.Sample) SimpleSample {
+	// Get a reusable map from the pool to reduce allocations
+	tags := tagMapPool.Get().(map[string]string)
+	clearMap(tags) // Ensure map is clean before use
+
 	ss := SimpleSample{
 		Timestamp:   sample.Time,
 		MetricName:  sample.Metric.Name,
 		MetricValue: sample.Value,
-		Tags:        make(map[string]string),
+		Tags:        tags,
 	}
 
 	if sample.Tags != nil {
@@ -62,13 +66,17 @@ func ConvertToSimple(ctx context.Context, sample metrics.Sample) SimpleSample {
 
 // ConvertToCompatible converts a k6 sample to the compatible schema format
 func ConvertToCompatible(ctx context.Context, sample metrics.Sample) (CompatibleSample, error) {
+	// Get a reusable map from the pool to reduce allocations
+	extraTags := tagMapPool.Get().(map[string]string)
+	clearMap(extraTags) // Ensure map is clean before use
+
 	cs := CompatibleSample{
 		Timestamp:        sample.Time,
 		MetricName:       sample.Metric.Name,
 		Value:            sample.Value,
 		MetricType:       mapMetricType(sample.Metric.Type),
 		ExpectedResponse: true, // default
-		ExtraTags:        make(map[string]string),
+		ExtraTags:        extraTags,
 	}
 
 	// Extract and map tags to columns
@@ -132,7 +140,9 @@ func ConvertToCompatible(ctx context.Context, sample metrics.Sample) (Compatible
 		}
 
 		// Remaining tags go to extra_tags
-		cs.ExtraTags = tagMap
+		for k, v := range tagMap {
+			cs.ExtraTags[k] = v
+		}
 	} else {
 		// No tags, use defaults
 		cs.TestID = "default"
