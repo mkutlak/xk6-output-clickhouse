@@ -64,12 +64,19 @@ func (o *Output) Start() error {
 	o.db = db
 	o.logger.Info("Connected to ClickHouse")
 
-	// Create schema
-	if err := createSchema(db, o.config.Database, o.config.Table); err != nil {
-		return err
+	// Create schema only if not skipped and in simple mode
+	if !o.config.SkipSchemaCreation {
+		if o.config.SchemaMode == "simple" {
+			if err := createSchema(db, o.config.Database, o.config.Table); err != nil {
+				return err
+			}
+			o.logger.Info("Schema created")
+		} else {
+			o.logger.Warn("Compatible schema mode enabled with skipSchemaCreation=false. Skipping schema creation as compatible schema should already exist.")
+		}
+	} else {
+		o.logger.Info("Schema creation skipped")
 	}
-
-	o.logger.Info("Schema created")
 
 	// Start periodic flusher
 	pf, err := output.NewPeriodicFlusher(o.config.PushInterval, o.flush)
@@ -116,9 +123,25 @@ func (o *Output) flush() {
 	}
 	defer batch.Rollback()
 
-	stmt, err := batch.Prepare(fmt.Sprintf(`
-		INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags) VALUES (?, ?, ?, ?)
-	`, o.config.Database, o.config.Table))
+	// Use appropriate INSERT query based on schema mode
+	var insertQuery string
+	if o.config.SchemaMode == "compatible" {
+		insertQuery = fmt.Sprintf(`
+			INSERT INTO %s.%s (
+				timestamp, build_id, release, version, branch,
+				metric_name, metric_type, value, testid,
+				ui_feature, scenario, name, method, status,
+				expected_response, error_code, rating, resource_type,
+				check_name, group_name, extra_tags
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, o.config.Database, o.config.Table)
+	} else {
+		insertQuery = fmt.Sprintf(`
+			INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags) VALUES (?, ?, ?, ?)
+		`, o.config.Database, o.config.Table)
+	}
+
+	stmt, err := batch.Prepare(insertQuery)
 	if err != nil {
 		o.logger.Error("Failed to prepare statement", zap.Error(err))
 		return
@@ -128,19 +151,27 @@ func (o *Output) flush() {
 	count := 0
 	for _, container := range samples {
 		for _, sample := range container.GetSamples() {
-			tags := make(map[string]string)
-			if sample.Tags != nil {
-				for k, v := range sample.Tags.Map() {
-					tags[k] = v
-				}
+			var err error
+
+			if o.config.SchemaMode == "compatible" {
+				cs := ConvertToCompatible(sample)
+				_, err = stmt.ExecContext(ctx,
+					cs.Timestamp, cs.BuildID, cs.Release, cs.Version, cs.Branch,
+					cs.MetricName, cs.MetricType, cs.Value, cs.TestID,
+					cs.UIFeature, cs.Scenario, cs.Name, cs.Method, cs.Status,
+					cs.ExpectedResponse, cs.ErrorCode, cs.Rating, cs.ResourceType,
+					cs.CheckName, cs.GroupName, cs.ExtraTags,
+				)
+			} else {
+				ss := ConvertToSimple(sample)
+				_, err = stmt.ExecContext(ctx,
+					ss.Timestamp,
+					ss.MetricName,
+					ss.MetricValue,
+					ss.Tags,
+				)
 			}
 
-			_, err := stmt.ExecContext(ctx,
-				sample.Time,
-				sample.Metric.Name,
-				sample.Value,
-				tags,
-			)
 			if err != nil {
 				o.logger.Error("Failed to insert sample", zap.Error(err))
 				continue
