@@ -1,11 +1,14 @@
 package clickhouse
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"time"
 
 	"go.k6.io/k6/output"
@@ -18,6 +21,33 @@ var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z0-9_]{1,63}$`)
 // isValidIdentifier validates ClickHouse identifier names
 func isValidIdentifier(name string) bool {
 	return validIdentifierRegex.MatchString(name)
+}
+
+// TLSConfig holds TLS/SSL configuration options
+type TLSConfig struct {
+	// Enabled controls whether TLS is enabled
+	// Env: K6_CLICKHOUSE_TLS_ENABLED
+	Enabled bool
+
+	// InsecureSkipVerify disables certificate verification (INSECURE - use only for testing)
+	// Env: K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY
+	InsecureSkipVerify bool
+
+	// CAFile is the path to a CA certificate file to append to the system pool
+	// Env: K6_CLICKHOUSE_TLS_CA_FILE
+	CAFile string
+
+	// CertFile is the path to a client certificate file for mTLS
+	// Env: K6_CLICKHOUSE_TLS_CERT_FILE
+	CertFile string
+
+	// KeyFile is the path to a client private key file for mTLS
+	// Env: K6_CLICKHOUSE_TLS_KEY_FILE
+	KeyFile string
+
+	// ServerName is the server name for SNI (Server Name Indication)
+	// Env: K6_CLICKHOUSE_TLS_SERVER_NAME
+	ServerName string
 }
 
 // Config holds the ClickHouse output configuration
@@ -69,6 +99,37 @@ type Config struct {
 	// SkipSchemaCreation disables automatic database and table creation.
 	// Env: K6_CLICKHOUSE_SKIP_SCHEMA_CREATION ("true" to skip)
 	SkipSchemaCreation bool
+
+	// TLS holds TLS/SSL configuration
+	TLS TLSConfig
+}
+
+// validateFileReadable checks if a file exists and is readable
+func validateFileReadable(path string) error {
+	if path == "" {
+		return fmt.Errorf("file path is empty")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file does not exist: %s", path)
+		}
+		return fmt.Errorf("cannot access file %s: %w", path, err)
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("path is a directory, not a file: %s", path)
+	}
+
+	// Try to open the file to verify readability
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("file is not readable: %s: %w", path, err)
+	}
+	file.Close()
+
+	return nil
 }
 
 // Validate checks the configuration for validity
@@ -101,6 +162,37 @@ func (c Config) Validate() error {
 		return fmt.Errorf("invalid schemaMode: %s (must be 'simple' or 'compatible')", c.SchemaMode)
 	}
 
+	// Validate TLS configuration
+	if c.TLS.Enabled {
+		// Validate CA certificate file if specified
+		if c.TLS.CAFile != "" {
+			if err := validateFileReadable(c.TLS.CAFile); err != nil {
+				return fmt.Errorf("TLS CA file validation failed: %w", err)
+			}
+		}
+
+		// Validate client certificate and key files
+		// Both must be specified together, or neither
+		hasCert := c.TLS.CertFile != ""
+		hasKey := c.TLS.KeyFile != ""
+
+		if hasCert != hasKey {
+			return fmt.Errorf("TLS client certificate and key must be specified together")
+		}
+
+		if hasCert {
+			if err := validateFileReadable(c.TLS.CertFile); err != nil {
+				return fmt.Errorf("TLS client certificate file validation failed: %w", err)
+			}
+		}
+
+		if hasKey {
+			if err := validateFileReadable(c.TLS.KeyFile); err != nil {
+				return fmt.Errorf("TLS client key file validation failed: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -115,6 +207,14 @@ func NewConfig() Config {
 		PushInterval:       1 * time.Second,
 		SchemaMode:         "simple",
 		SkipSchemaCreation: false,
+		TLS: TLSConfig{
+			Enabled:            false,
+			InsecureSkipVerify: false,
+			CAFile:             "",
+			CertFile:           "",
+			KeyFile:            "",
+			ServerName:         "",
+		},
 	}
 }
 
@@ -133,6 +233,14 @@ func ParseConfig(params output.Params) (Config, error) {
 			PushInterval       string `json:"pushInterval"`
 			SchemaMode         string `json:"schemaMode"`
 			SkipSchemaCreation bool   `json:"skipSchemaCreation"`
+			TLS                *struct {
+				Enabled            bool   `json:"enabled"`
+				InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+				CAFile             string `json:"caFile"`
+				CertFile           string `json:"certFile"`
+				KeyFile            string `json:"keyFile"`
+				ServerName         string `json:"serverName"`
+			} `json:"tls"`
 		}{}
 
 		if err := json.Unmarshal(params.JSONConfig, &jsonConf); err != nil {
@@ -167,6 +275,23 @@ func ParseConfig(params output.Params) (Config, error) {
 		if jsonConf.SkipSchemaCreation {
 			cfg.SkipSchemaCreation = jsonConf.SkipSchemaCreation
 		}
+		// Parse TLS config
+		if jsonConf.TLS != nil {
+			cfg.TLS.Enabled = jsonConf.TLS.Enabled
+			cfg.TLS.InsecureSkipVerify = jsonConf.TLS.InsecureSkipVerify
+			if jsonConf.TLS.CAFile != "" {
+				cfg.TLS.CAFile = jsonConf.TLS.CAFile
+			}
+			if jsonConf.TLS.CertFile != "" {
+				cfg.TLS.CertFile = jsonConf.TLS.CertFile
+			}
+			if jsonConf.TLS.KeyFile != "" {
+				cfg.TLS.KeyFile = jsonConf.TLS.KeyFile
+			}
+			if jsonConf.TLS.ServerName != "" {
+				cfg.TLS.ServerName = jsonConf.TLS.ServerName
+			}
+		}
 	}
 
 	// Parse URL config if provided (--out clickhouse=addr?database=foo)
@@ -198,6 +323,30 @@ func ParseConfig(params output.Params) (Config, error) {
 			if skipSchema := q.Get("skipSchemaCreation"); skipSchema == "true" {
 				cfg.SkipSchemaCreation = true
 			}
+
+			// Parse TLS URL parameters
+			if tlsEnabled := q.Get("tlsEnabled"); tlsEnabled != "" {
+				if enabled, err := strconv.ParseBool(tlsEnabled); err == nil {
+					cfg.TLS.Enabled = enabled
+				}
+			}
+			if tlsInsecure := q.Get("tlsInsecureSkipVerify"); tlsInsecure != "" {
+				if insecure, err := strconv.ParseBool(tlsInsecure); err == nil {
+					cfg.TLS.InsecureSkipVerify = insecure
+				}
+			}
+			if tlsCAFile := q.Get("tlsCAFile"); tlsCAFile != "" {
+				cfg.TLS.CAFile = tlsCAFile
+			}
+			if tlsCertFile := q.Get("tlsCertFile"); tlsCertFile != "" {
+				cfg.TLS.CertFile = tlsCertFile
+			}
+			if tlsKeyFile := q.Get("tlsKeyFile"); tlsKeyFile != "" {
+				cfg.TLS.KeyFile = tlsKeyFile
+			}
+			if tlsServerName := q.Get("tlsServerName"); tlsServerName != "" {
+				cfg.TLS.ServerName = tlsServerName
+			}
 		}
 	}
 
@@ -224,10 +373,83 @@ func ParseConfig(params output.Params) (Config, error) {
 		cfg.SkipSchemaCreation = true
 	}
 
+	// Parse TLS environment variables
+	if tlsEnabled := os.Getenv("K6_CLICKHOUSE_TLS_ENABLED"); tlsEnabled != "" {
+		if enabled, err := strconv.ParseBool(tlsEnabled); err == nil {
+			cfg.TLS.Enabled = enabled
+		}
+	}
+	if tlsInsecure := os.Getenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY"); tlsInsecure != "" {
+		if insecure, err := strconv.ParseBool(tlsInsecure); err == nil {
+			cfg.TLS.InsecureSkipVerify = insecure
+		}
+	}
+	if tlsCAFile := os.Getenv("K6_CLICKHOUSE_TLS_CA_FILE"); tlsCAFile != "" {
+		cfg.TLS.CAFile = tlsCAFile
+	}
+	if tlsCertFile := os.Getenv("K6_CLICKHOUSE_TLS_CERT_FILE"); tlsCertFile != "" {
+		cfg.TLS.CertFile = tlsCertFile
+	}
+	if tlsKeyFile := os.Getenv("K6_CLICKHOUSE_TLS_KEY_FILE"); tlsKeyFile != "" {
+		cfg.TLS.KeyFile = tlsKeyFile
+	}
+	if tlsServerName := os.Getenv("K6_CLICKHOUSE_TLS_SERVER_NAME"); tlsServerName != "" {
+		cfg.TLS.ServerName = tlsServerName
+	}
+
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return cfg, nil
+}
+
+// BuildTLSConfig builds a *tls.Config from the TLSConfig settings
+// Returns nil if TLS is not enabled
+func (tc TLSConfig) BuildTLSConfig() (*tls.Config, error) {
+	if !tc.Enabled {
+		return nil, nil
+	}
+
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: tc.InsecureSkipVerify,
+		ServerName:         tc.ServerName,
+	}
+
+	// Start with system CA pool
+	var certPool *x509.CertPool
+	var err error
+
+	certPool, err = x509.SystemCertPool()
+	if err != nil {
+		// On some systems (like Windows), SystemCertPool might not be available
+		// Fall back to an empty pool
+		certPool = x509.NewCertPool()
+	}
+
+	// Append custom CA certificate if provided
+	if tc.CAFile != "" {
+		caCert, err := os.ReadFile(tc.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate file %s: %w", tc.CAFile, err)
+		}
+
+		if ok := certPool.AppendCertsFromPEM(caCert); !ok {
+			return nil, fmt.Errorf("failed to parse CA certificate from %s: no valid certificates found", tc.CAFile)
+		}
+	}
+
+	tlsConfig.RootCAs = certPool
+
+	// Load client certificate and key if provided
+	if tc.CertFile != "" && tc.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(tc.CertFile, tc.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate/key pair: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsConfig, nil
 }

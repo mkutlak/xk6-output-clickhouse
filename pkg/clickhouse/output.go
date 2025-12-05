@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,6 +68,28 @@ func (o *Output) Start() error {
 
 	o.logger.Debug("Starting ClickHouse output")
 
+	// Build TLS configuration
+	tlsConfig, err := o.config.TLS.BuildTLSConfig()
+	if err != nil {
+		return fmt.Errorf("failed to build TLS config: %w", err)
+	}
+
+	// Warn if using port 9000 with TLS (should use 9440)
+	if o.config.TLS.Enabled && strings.Contains(o.config.Addr, ":9000") {
+		o.logger.Warn("TLS is enabled but using port 9000. Consider using port 9440 for secure connections.")
+	}
+
+	// Log TLS status
+	if o.config.TLS.Enabled {
+		if o.config.TLS.InsecureSkipVerify {
+			o.logger.Warn("TLS enabled with InsecureSkipVerify=true. Certificate verification is DISABLED. This is insecure and should only be used for testing.")
+		} else {
+			o.logger.Info("TLS enabled with certificate verification")
+		}
+	} else {
+		o.logger.Debug("TLS disabled, using unencrypted connection")
+	}
+
 	// Connect to ClickHouse
 	db := clickhouse.OpenDB(&clickhouse.Options{
 		Addr: []string{o.config.Addr},
@@ -75,6 +98,7 @@ func (o *Output) Start() error {
 			Username: o.config.User,
 			Password: o.config.Password,
 		},
+		TLS: tlsConfig,
 	})
 
 	// Test connection
