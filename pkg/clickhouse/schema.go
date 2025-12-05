@@ -14,13 +14,22 @@ const (
 func createSchema(db *sql.DB, database, table string) error {
 	ctx := context.Background()
 
-	// Create database
-	_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database))
+	// Defense-in-depth: Validate identifiers before using them
+	// Even though validation happens in config.go, schema.go should independently validate
+	if !isValidIdentifier(database) {
+		return fmt.Errorf("invalid database name: %s (must be alphanumeric + underscore, max 63 chars)", database)
+	}
+	if !isValidIdentifier(table) {
+		return fmt.Errorf("invalid table name: %s (must be alphanumeric + underscore, max 63 chars)", table)
+	}
+
+	// Create database with properly escaped identifier
+	_, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", escapeIdentifier(database)))
 	if err != nil {
 		return fmt.Errorf("failed to create database: %w", err)
 	}
 
-	// Create table
+	// Create table with properly escaped identifiers
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.%s (
 			timestamp DateTime64(%d),
@@ -30,7 +39,7 @@ func createSchema(db *sql.DB, database, table string) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMMDD(timestamp)
 		ORDER BY (metric, timestamp)
-	`, database, table, TimestampPrecision)
+	`, escapeIdentifier(database), escapeIdentifier(table), TimestampPrecision)
 
 	_, err = db.ExecContext(ctx, query)
 	if err != nil {
