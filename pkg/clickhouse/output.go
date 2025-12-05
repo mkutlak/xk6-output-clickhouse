@@ -163,7 +163,7 @@ func (o *Output) Start() error {
 		o.insertQuery = fmt.Sprintf(`
 			INSERT INTO %s.%s (
 				timestamp, build_id, release, version, branch,
-				metric_name, metric_type, value, testid,
+				metric, metric_type, value, testid,
 				ui_feature, scenario, name, method, status,
 				expected_response, error_code, rating, resource_type,
 				check_name, group_name, extra_tags
@@ -171,7 +171,7 @@ func (o *Output) Start() error {
 		`, escapeIdentifier(o.config.Database), escapeIdentifier(o.config.Table))
 	} else {
 		o.insertQuery = fmt.Sprintf(`
-			INSERT INTO %s.%s (timestamp, metric_name, metric_value, tags) VALUES (?, ?, ?, ?)
+			INSERT INTO %s.%s (timestamp, metric, value, tags) VALUES (?, ?, ?, ?)
 		`, escapeIdentifier(o.config.Database), escapeIdentifier(o.config.Table))
 	}
 
@@ -296,7 +296,7 @@ func (o *Output) flush() {
 				row[2] = cs.Release
 				row[3] = cs.Version
 				row[4] = cs.Branch
-				row[5] = cs.MetricName
+				row[5] = cs.Metric
 				row[6] = cs.MetricType
 				row[7] = cs.Value
 				row[8] = cs.TestID
@@ -328,8 +328,8 @@ func (o *Output) flush() {
 
 				// Populate row buffer with sample data
 				row[0] = ss.Timestamp
-				row[1] = ss.MetricName
-				row[2] = ss.MetricValue
+				row[1] = ss.Metric
+				row[2] = ss.Value
 				row[3] = ss.Tags
 
 				_, execErr = stmt.ExecContext(ctx, row...)

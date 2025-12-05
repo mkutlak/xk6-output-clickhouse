@@ -99,12 +99,12 @@ func TestCreateSchema(t *testing.T) {
 						if execCount == 2 {
 							assert.Contains(t, query, "CREATE TABLE IF NOT EXISTS k6.samples")
 							assert.Contains(t, query, "timestamp DateTime64(3)")
-							assert.Contains(t, query, "metric_name LowCardinality(String)")
-							assert.Contains(t, query, "metric_value Float64")
+							assert.Contains(t, query, "metric LowCardinality(String)")
+							assert.Contains(t, query, "value Float64")
 							assert.Contains(t, query, "tags Map(String, String)")
 							assert.Contains(t, query, "ENGINE = MergeTree()")
 							assert.Contains(t, query, "PARTITION BY toYYYYMMDD(timestamp)")
-							assert.Contains(t, query, "ORDER BY (metric_name, timestamp)")
+							assert.Contains(t, query, "ORDER BY (metric, timestamp)")
 						}
 
 						return &mockResult{}, nil
@@ -261,16 +261,16 @@ func TestCreateSchema_TableStructure(t *testing.T) {
 
 		// This test documents the expected schema structure
 		expectedSchema := map[string]string{
-			"timestamp":    "DateTime64(3)",
-			"metric_name":  "LowCardinality(String)",
-			"metric_value": "Float64",
-			"tags":         "Map(String, String)",
+			"timestamp": "DateTime64(3)",
+			"metric":    "LowCardinality(String)",
+			"value":     "Float64",
+			"tags":      "Map(String, String)",
 		}
 
 		// Verify expected schema
 		assert.Equal(t, "DateTime64(3)", expectedSchema["timestamp"])
-		assert.Equal(t, "LowCardinality(String)", expectedSchema["metric_name"])
-		assert.Equal(t, "Float64", expectedSchema["metric_value"])
+		assert.Equal(t, "LowCardinality(String)", expectedSchema["metric"])
+		assert.Equal(t, "Float64", expectedSchema["value"])
 		assert.Equal(t, "Map(String, String)", expectedSchema["tags"])
 	})
 
@@ -291,8 +291,8 @@ func TestCreateSchema_TableStructure(t *testing.T) {
 	t.Run("verify table ordering", func(t *testing.T) {
 		t.Parallel()
 
-		expectedOrder := "(metric_name, timestamp)"
-		assert.Equal(t, "(metric_name, timestamp)", expectedOrder)
+		expectedOrder := "(metric, timestamp)"
+		assert.Equal(t, "(metric, timestamp)", expectedOrder)
 	})
 }
 
@@ -439,24 +439,24 @@ func TestSchemaQuery_Validation(t *testing.T) {
 		query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.%s (
 			timestamp DateTime64(3),
-			metric_name LowCardinality(String),
-			metric_value Float64,
+			metric LowCardinality(String),
+			value Float64,
 			tags Map(String, String)
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMMDD(timestamp)
-		ORDER BY (metric_name, timestamp)
+		ORDER BY (metric, timestamp)
 	`, database, table)
 
 		// Verify query contains all necessary components
 		assert.Contains(t, query, "CREATE TABLE IF NOT EXISTS")
 		assert.Contains(t, query, "k6.samples")
 		assert.Contains(t, query, "timestamp DateTime64(3)")
-		assert.Contains(t, query, "metric_name LowCardinality(String)")
-		assert.Contains(t, query, "metric_value Float64")
+		assert.Contains(t, query, "metric LowCardinality(String)")
+		assert.Contains(t, query, "value Float64")
 		assert.Contains(t, query, "tags Map(String, String)")
 		assert.Contains(t, query, "ENGINE = MergeTree()")
 		assert.Contains(t, query, "PARTITION BY toYYYYMMDD(timestamp)")
-		assert.Contains(t, query, "ORDER BY (metric_name, timestamp)")
+		assert.Contains(t, query, "ORDER BY (metric, timestamp)")
 
 		// Verify query doesn't contain common SQL errors
 		assert.NotContains(t, strings.ToUpper(query), "CREAT TABLE") // typo
@@ -475,12 +475,12 @@ func BenchmarkSchemaQueryGeneration(b *testing.B) {
 		_ = fmt.Sprintf(`
 			CREATE TABLE IF NOT EXISTS %s.%s (
 				timestamp DateTime64(3),
-				metric_name LowCardinality(String),
-				metric_value Float64,
+				metric LowCardinality(String),
+				value Float64,
 				tags Map(String, String)
 			) ENGINE = MergeTree()
 			PARTITION BY toYYYYMMDD(timestamp)
-			ORDER BY (metric_name, timestamp)
+			ORDER BY (metric, timestamp)
 		`, database, table)
 	}
 }

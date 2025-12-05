@@ -11,10 +11,10 @@ import (
 
 // SimpleSample represents a sample for the simple schema
 type SimpleSample struct {
-	Timestamp   time.Time
-	MetricName  string
-	MetricValue float64
-	Tags        map[string]string
+	Timestamp time.Time
+	Metric    string
+	Value     float64
+	Tags      map[string]string
 }
 
 // CompatibleSample represents a sample for the compatible schema
@@ -24,7 +24,7 @@ type CompatibleSample struct {
 	Release          string
 	Version          string
 	Branch           string
-	MetricName       string
+	Metric           string
 	MetricType       int8
 	Value            float64
 	TestID           string
@@ -49,10 +49,10 @@ func ConvertToSimple(ctx context.Context, sample metrics.Sample) SimpleSample {
 	clearMap(tags) // Ensure map is clean before use
 
 	ss := SimpleSample{
-		Timestamp:   sample.Time,
-		MetricName:  sample.Metric.Name,
-		MetricValue: sample.Value,
-		Tags:        tags,
+		Timestamp: sample.Time,
+		Metric:    sample.Metric.Name,
+		Value:     sample.Value,
+		Tags:      tags,
 	}
 
 	if sample.Tags != nil {
@@ -72,7 +72,7 @@ func ConvertToCompatible(ctx context.Context, sample metrics.Sample) (Compatible
 
 	cs := CompatibleSample{
 		Timestamp:        sample.Time,
-		MetricName:       sample.Metric.Name,
+		Metric:           sample.Metric.Name,
 		Value:            sample.Value,
 		MetricType:       mapMetricType(sample.Metric.Type),
 		ExpectedResponse: true, // default

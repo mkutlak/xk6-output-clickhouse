@@ -425,7 +425,7 @@ func TestOutput_MetricTypes(t *testing.T) {
 		// - Rate (http_req_failed)
 		// - Trend (http_req_duration)
 		//
-		// All should be stored as Float64 in metric_value column
+		// All should be stored as Float64 in value column
 	})
 }
 
@@ -578,7 +578,7 @@ func TestOutput_BatchTransactions(t *testing.T) {
 	})
 }
 
-func TestOutput_MetricNameValidation(t *testing.T) {
+func TestOutput_MetricValidation(t *testing.T) {
 	t.Parallel()
 
 	t.Run("handles various metric name formats", func(t *testing.T) {

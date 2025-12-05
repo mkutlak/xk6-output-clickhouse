@@ -191,12 +191,12 @@ The extension creates a table with this structure:
 ```sql
 CREATE TABLE k6.samples (
     timestamp DateTime64(3),
-    metric_name LowCardinality(String),
-    metric_value Float64,
+    metric LowCardinality(String),
+    value Float64,
     tags Map(String, String)
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMMDD(timestamp)
-ORDER BY (metric_name, timestamp);
+ORDER BY (metric, timestamp);
 ```
 
 ## Querying Metrics
@@ -210,16 +210,16 @@ ORDER BY timestamp DESC
 LIMIT 100;
 
 -- Average HTTP request duration
-SELECT avg(metric_value) 
-FROM k6.samples 
-WHERE metric_name = 'http_req_duration';
+SELECT avg(value)
+FROM k6.samples
+WHERE metric = 'http_req_duration';
 
 -- Request rate over time
-SELECT 
+SELECT
     toStartOfMinute(timestamp) as time,
     count() as requests
-FROM k6.samples 
-WHERE metric_name = 'http_reqs'
+FROM k6.samples
+WHERE metric = 'http_reqs'
 GROUP BY time
 ORDER BY time;
 ```

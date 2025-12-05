@@ -124,8 +124,8 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	var metricValue float64
 	var tags map[string]string
 	
-	// In simple schema: timestamp, metric_name, metric_value, tags
-	err = verifyDB.QueryRow(fmt.Sprintf("SELECT metric_name, metric_value, tags FROM %s", tableName)).Scan(&metricName, &metricValue, &tags)
+	// In simple schema: timestamp, metric, value, tags
+	err = verifyDB.QueryRow(fmt.Sprintf("SELECT metric, value, tags FROM %s", tableName)).Scan(&metricName, &metricValue, &tags)
 	require.NoError(t, err)
 
 	assert.Equal(t, "test_metric", metricName)

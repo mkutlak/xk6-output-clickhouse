@@ -24,12 +24,12 @@ func createSchema(db *sql.DB, database, table string) error {
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.%s (
 			timestamp DateTime64(%d),
-			metric_name LowCardinality(String),
-			metric_value Float64,
+			metric LowCardinality(String),
+			value Float64,
 			tags Map(String, String)
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMMDD(timestamp)
-		ORDER BY (metric_name, timestamp)
+		ORDER BY (metric, timestamp)
 	`, database, table, TimestampPrecision)
 
 	_, err = db.ExecContext(ctx, query)
