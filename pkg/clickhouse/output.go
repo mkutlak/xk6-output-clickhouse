@@ -63,8 +63,9 @@ type Output struct {
 	insertQuery     string // Pre-computed INSERT query
 
 	// Concurrency control
-	mu     sync.RWMutex
-	closed bool
+	mu      sync.RWMutex
+	closed  bool
+	flushWG sync.WaitGroup // Track in-flight flushes
 
 	// Context cancellation for graceful shutdown
 	shutdownCtx    context.Context
@@ -210,10 +211,18 @@ func (o *Output) Stop() error {
 		o.shutdownCancel()
 	}
 
+	// Stop scheduling new flushes
 	if o.periodicFlusher != nil {
 		o.periodicFlusher.Stop()
 	}
 
+	// Wait for all in-flight flushes to complete
+	// This prevents closing the database while flushes are using it
+	o.logger.Debug("Waiting for in-flight flushes to complete")
+	o.flushWG.Wait()
+	o.logger.Debug("All flushes completed")
+
+	// Now safe to close database
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -227,11 +236,17 @@ func (o *Output) Stop() error {
 
 // flush writes buffered samples to ClickHouse
 func (o *Output) flush() {
+	// Quick early exit check (before acquiring WaitGroup)
 	o.mu.RLock()
 	if o.closed {
 		o.mu.RUnlock()
 		return
 	}
+
+	// Register active flush while still under lock (prevents race with Stop())
+	// This is critical: Add(1) must happen while holding RLock to prevent
+	// Stop() from closing the database between the closed check and Add(1)
+	o.flushWG.Add(1)
 
 	// Capture state under lock
 	db := o.db
@@ -240,6 +255,19 @@ func (o *Output) flush() {
 	logger := o.logger
 	ctx := o.shutdownCtx
 	o.mu.RUnlock()
+
+	// Ensure Done() is called even on early return
+	defer o.flushWG.Done()
+
+	// Check if context was cancelled during shutdown (if context is set)
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			logger.Debug("Flush cancelled by shutdown context")
+			return
+		default:
+		}
+	}
 
 	samples := o.GetBufferedSamples()
 	if len(samples) == 0 {
@@ -275,7 +303,7 @@ func (o *Output) flush() {
 		for _, sample := range container.GetSamples() {
 			// Check for context cancellation every 1000 samples
 			// Use non-blocking select for optimal performance
-			if count%1000 == 0 {
+			if ctx != nil && count%1000 == 0 {
 				select {
 				case <-ctx.Done():
 					logger.Warn("Flush cancelled by context",
