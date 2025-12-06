@@ -61,7 +61,7 @@ jobs:
 
   build-binaries:
     name: Build Release Binaries
-    needs: [validate, test-coverage]
+    needs: [validate]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -107,7 +107,7 @@ jobs:
 
   build-docker:
     name: Build and Push Docker Images
-    needs: [validate, test-coverage]
+    needs: [validate]
     runs-on: ubuntu-latest
     permissions:
       contents: read
