@@ -1,4 +1,8 @@
-.PHONY: build clean test test-coverage fmt lint vet tidy check install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-compose-test help all
+.PHONY: build clean test test-coverage fmt lint vet tidy check install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-compose-test release-binaries docker-build-multi docker-push docker-tag checksums help all
+
+# CI/CD variables
+IMAGE_NAME ?= ghcr.io/mkutlak/xk6-output-clickhouse
+VERSION ?= latest
 
 # Default target
 all: check build
@@ -89,6 +93,50 @@ docker-compose-test:
 	@docker compose --profile test run --rm k6
 	@echo "Test completed"
 
+# Build release binaries for multiple architectures
+release-binaries: check
+	@echo "Building release binaries..."
+	@mkdir -p dist
+	@for os in linux; do \
+		for arch in amd64 arm64; do \
+			echo "Building k6 for $$os/$$arch..."; \
+			GOOS=$$os GOARCH=$$arch GOPRIVATE="go.k6.io/k6" xk6 build \
+				--output ./dist/k6-$$os-$$arch \
+				--with github.com/mkutlak/xk6-output-clickhouse=.; \
+			sha256sum ./dist/k6-$$os-$$arch > ./dist/k6-$$os-$$arch.sha256; \
+		done; \
+	done
+	@echo "Release binaries built in ./dist"
+	@ls -lh ./dist/k6-*
+
+# Build multi-arch Docker image with buildx
+docker-build-multi:
+	@echo "Building multi-architecture Docker image..."
+	@docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--tag $(IMAGE_NAME):$(VERSION) \
+		--push \
+		.
+	@echo "Multi-arch image pushed: $(IMAGE_NAME):$(VERSION)"
+
+# Push Docker image to registry
+docker-push:
+	@echo "Pushing Docker image..."
+	@docker push $(IMAGE_NAME):$(VERSION)
+	@echo "Pushed: $(IMAGE_NAME):$(VERSION)"
+
+# Tag Docker image with version
+docker-tag:
+	@echo "Tagging Docker image..."
+	@docker tag $(IMAGE_NAME):$(shell git rev-parse --short HEAD) $(IMAGE_NAME):$(VERSION)
+	@echo "Tagged: $(IMAGE_NAME):$(VERSION)"
+
+# Generate SHA256 checksums for release binaries
+checksums:
+	@echo "Generating checksums..."
+	@cd dist && sha256sum k6-* > checksums.txt
+	@echo "Checksums generated: dist/checksums.txt"
+
 # Install development tools
 install-tools:
 	@echo "Installing development tools..."
@@ -99,6 +147,8 @@ install-tools:
 # Show help
 help:
 	@echo "Available targets:"
+	@echo ""
+	@echo "Development:"
 	@echo "  make build                - Build k6 binary with xk6-output-clickhouse extension"
 	@echo "  make test                 - Run tests"
 	@echo "  make test-coverage        - Run tests with coverage report"
@@ -108,12 +158,26 @@ help:
 	@echo "  make tidy                 - Tidy go.mod and go.sum"
 	@echo "  make check                - Run all checks (fmt, vet, tidy, test)"
 	@echo "  make clean                - Remove build artifacts"
+	@echo "  make install-tools        - Install development tools"
+	@echo "  make all                  - Run checks and build (default)"
+	@echo ""
+	@echo "Docker:"
 	@echo "  make docker-build         - Build Docker image"
+	@echo "  make docker-build-multi   - Build and push multi-arch Docker image"
+	@echo "  make docker-push          - Push Docker image to registry"
+	@echo "  make docker-tag           - Tag Docker image with VERSION"
 	@echo "  make docker-clean         - Remove Docker image"
 	@echo "  make docker-compose-up    - Start ClickHouse and Grafana services"
 	@echo "  make docker-compose-down  - Stop and remove all services"
 	@echo "  make docker-compose-logs  - View logs from services"
 	@echo "  make docker-compose-test  - Build and run k6 test with docker-compose"
-	@echo "  make install-tools        - Install development tools"
-	@echo "  make all                  - Run checks and build (default)"
+	@echo ""
+	@echo "Release (CI/CD):"
+	@echo "  make release-binaries     - Build release binaries for amd64 and arm64"
+	@echo "  make checksums            - Generate SHA256 checksums for binaries"
+	@echo ""
+	@echo "Variables:"
+	@echo "  IMAGE_NAME=$(IMAGE_NAME)"
+	@echo "  VERSION=$(VERSION)"
+	@echo ""
 	@echo "  make help                 - Show this help message"

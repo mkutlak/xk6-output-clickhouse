@@ -1,19 +1,68 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
+  # Go dependencies
+  - package-ecosystem: gomod
     directory: "/"
     schedule:
-      interval: "monthly"
-  - package-ecosystem: "gomod"
+      interval: monthly
+      day: monday
+      time: "03:15"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    allow:
+      - dependency-type: "production"
+      - dependency-type: "development"
+    assignees:
+      - mkutlak
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: "monthly"
-  - package-ecosystem: "docker"
+      interval: monthly
+      day: monday
+      time: "03:15"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    assignees:
+      - mkutlak
+
+  # Docker
+  - package-ecosystem: docker
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: monthly
+      day: monday
+      time: "03:15"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"
+    assignees:
+      - mkutlak
+
+  # npm (for semantic-release)
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: monthly
+      day: monday
+      time: "03:15"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(npm)"
+      include: "scope"
+    assignees:
+      - mkutlak

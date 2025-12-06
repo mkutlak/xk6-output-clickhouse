@@ -1,49 +1,65 @@
-# Git
+# Git files
 .git
 .gitignore
+.gitattributes
 .github
 
 # Documentation
+*.md
 README.md
 LICENSE
-*.md
-
-# IDE
-.vscode/
-.idea/
-.claude/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
+docs/
 
 # Build artifacts
 k6
+k6ext
+dist/
 *.exe
 *.dll
 *.so
 *.dylib
 *.test
 *.out
+coverage.html
 
-# Go workspace
-go.work
-go.work.sum
+# Test files
+*_test.go
+testdata/
 
-# Examples and tests (if not needed in container)
-examples/
+# IDE files
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 
-# Build files
+# Dependencies
+vendor/
+
+# Docker files
 Dockerfile
 .dockerignore
+docker-compose.yml
+
+# Build files
 Makefile
 
 # CI/CD
 .github/
 
+# Go workspace
+go.work
+go.work.sum
+
+# Examples and tests
+examples/
+
 # Misc
+.env
+.env.local
+*.log
 grafana-xk6-output-influxdb.txt
 modtools_frozen.yml
