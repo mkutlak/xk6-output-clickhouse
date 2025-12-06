@@ -50,19 +50,3 @@ updates:
       include: "scope"
     assignees:
       - mkutlak
-
-  # npm (for semantic-release)
-  - package-ecosystem: npm
-    directory: "/"
-    schedule:
-      interval: monthly
-      day: monday
-      time: "03:15"
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "chore(npm)"
-      include: "scope"
-    assignees:
-      - mkutlak
