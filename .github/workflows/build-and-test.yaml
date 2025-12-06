@@ -2,6 +2,13 @@ name: Build and Test
 
 on:
   pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'pkg/**'
+      - 'register.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/build-and-test.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

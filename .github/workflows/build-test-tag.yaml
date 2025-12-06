@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'Dockerfile'
+      - 'pkg/**'
+      - 'register.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/build-test-tag.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -166,6 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
       pull-requests: write
     outputs:
       new-release-published: ${{ steps.release.outputs.new_release_published }}
