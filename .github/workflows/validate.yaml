@@ -1,9 +1,6 @@
 name: Validate
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
 
 concurrency:
@@ -37,9 +34,11 @@ jobs:
 
       - name: Check code formatting
         run: |
-          if ! go fmt ./... | grep -q '^$'; then
-            echo "Code formatting issues found. Run 'go fmt ./...'"
-            go fmt ./...
+          output=$(gofmt -l .)
+          if [ -n "$output" ]; then
+            echo "Code formatting issues found in:"
+            echo "$output"
+            echo "Run 'go fmt ./...'"
             exit 1
           fi
 
