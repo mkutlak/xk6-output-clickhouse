@@ -173,7 +173,7 @@ jobs:
 
       - name: Run semantic-release
         id: release
-        uses: cycjimmy/semantic-release-action@v4
+        uses: cycjimmy/semantic-release-action@v6
         with:
           semantic_version: 24.3.0
           extra_plugins: |
