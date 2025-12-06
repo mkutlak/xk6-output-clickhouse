@@ -46,7 +46,7 @@ func createTempCACert(t *testing.T) string {
 	certFile := filepath.Join(t.TempDir(), "ca.pem")
 	f, err := os.Create(certFile)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { require.NoError(t, f.Close()) }()
 
 	err = pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	require.NoError(t, err)
@@ -82,7 +82,7 @@ func createTempClientCert(t *testing.T) (certFile, keyFile string) {
 	certFile = filepath.Join(t.TempDir(), "client-cert.pem")
 	cf, err := os.Create(certFile)
 	require.NoError(t, err)
-	defer cf.Close()
+	defer func() { require.NoError(t, cf.Close()) }()
 
 	err = pem.Encode(cf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func createTempClientCert(t *testing.T) (certFile, keyFile string) {
 	keyFile = filepath.Join(t.TempDir(), "client-key.pem")
 	kf, err := os.Create(keyFile)
 	require.NoError(t, err)
-	defer kf.Close()
+	defer func() { require.NoError(t, kf.Close()) }()
 
 	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
 	err = pem.Encode(kf, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privateKeyBytes})
@@ -214,7 +214,7 @@ func TestTLSConfig_BuildTLSConfig_InvalidCAContent(t *testing.T) {
 
 	// Create a file with invalid PEM content
 	invalidCAFile := filepath.Join(t.TempDir(), "invalid-ca.pem")
-	err := os.WriteFile(invalidCAFile, []byte("not a valid PEM certificate"), 0600)
+	err := os.WriteFile(invalidCAFile, []byte("not a valid PEM certificate"), 0o600)
 	require.NoError(t, err)
 
 	tlsConfig := TLSConfig{
@@ -319,7 +319,7 @@ func TestValidateFileReadable(t *testing.T) {
 		t.Parallel()
 
 		file := filepath.Join(t.TempDir(), "test.txt")
-		err := os.WriteFile(file, []byte("test content"), 0644)
+		err := os.WriteFile(file, []byte("test content"), 0o644)
 		require.NoError(t, err)
 
 		err = validateFileReadable(file)
@@ -330,7 +330,7 @@ func TestValidateFileReadable(t *testing.T) {
 		t.Parallel()
 
 		file := filepath.Join(t.TempDir(), "unreadable.txt")
-		err := os.WriteFile(file, []byte("test content"), 0000)
+		err := os.WriteFile(file, []byte("test content"), 0o000)
 		require.NoError(t, err)
 
 		err = validateFileReadable(file)

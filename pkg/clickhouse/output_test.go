@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
 )
 
@@ -658,32 +657,6 @@ func TestOutput_ConfigurationValidation(t *testing.T) {
 		assert.Equal(t, "test_table", clickhouseOut.config.Table)
 		assert.Equal(t, 5*time.Second, clickhouseOut.config.PushInterval)
 	})
-}
-
-// Helper functions for testing
-
-func createTestMetric(name string) *metrics.Metric {
-	registry := metrics.NewRegistry()
-	return registry.MustNewMetric(name, metrics.Trend)
-}
-
-func createTestSample(metricName string, value float64, tags map[string]string) metrics.Sample {
-	metric := createTestMetric(metricName)
-
-	var metricTags *metrics.TagSet
-	if tags != nil {
-		registry := metrics.NewRegistry()
-		metricTags = registry.RootTagSet().WithTagsFromMap(tags)
-	}
-
-	return metrics.Sample{
-		TimeSeries: metrics.TimeSeries{
-			Metric: metric,
-			Tags:   metricTags,
-		},
-		Time:  time.Now(),
-		Value: value,
-	}
 }
 
 // Benchmark tests

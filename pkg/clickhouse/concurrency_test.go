@@ -251,7 +251,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 				row[2] = 123.45
 				row[3] = map[string]string{"key": "value"}
 
-				simpleRowPool.Put(row)
+				simpleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
 			}()
 		}
 
@@ -261,7 +261,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 		row := simpleRowPool.Get().([]interface{})
 		assert.NotNil(t, row)
 		assert.Equal(t, 4, len(row), "Row slice should have 4 elements")
-		simpleRowPool.Put(row)
+		simpleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
 	})
 
 	t.Run("concurrent compatibleRowPool access", func(t *testing.T) {
@@ -280,7 +280,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 					row[i] = i
 				}
 
-				compatibleRowPool.Put(row)
+				compatibleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
 			}()
 		}
 
@@ -290,7 +290,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 		row := compatibleRowPool.Get().([]interface{})
 		assert.NotNil(t, row)
 		assert.Equal(t, 21, len(row), "Row slice should have 21 elements")
-		compatibleRowPool.Put(row)
+		compatibleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
 	})
 }
 

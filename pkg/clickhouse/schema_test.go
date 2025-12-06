@@ -3,7 +3,6 @@ package clickhouse
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,34 +36,6 @@ func (m *mockResult) LastInsertId() (int64, error) {
 
 func (m *mockResult) RowsAffected() (int64, error) {
 	return m.rowsAffected, m.err
-}
-
-// mockConn implements driver.Conn for testing
-type mockConn struct {
-	execFunc func(query string, args []driver.Value) (driver.Result, error)
-}
-
-func (m *mockConn) Prepare(query string) (driver.Stmt, error) {
-	return nil, nil
-}
-
-func (m *mockConn) Close() error {
-	return nil
-}
-
-func (m *mockConn) Begin() (driver.Tx, error) {
-	return nil, nil
-}
-
-func (m *mockConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	if m.execFunc != nil {
-		driverArgs := make([]driver.Value, len(args))
-		for i, arg := range args {
-			driverArgs[i] = arg.Value
-		}
-		return m.execFunc(query, driverArgs)
-	}
-	return &mockResult{}, nil
 }
 
 func TestCreateSchema(t *testing.T) {

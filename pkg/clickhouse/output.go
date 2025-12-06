@@ -145,7 +145,7 @@ func (o *Output) Start() error {
 	})
 
 	// Test connection
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(o.shutdownCtx); err != nil {
 		return fmt.Errorf("failed to ping clickhouse: %w", err)
 	}
 
@@ -227,7 +227,7 @@ func (o *Output) Stop() error {
 	defer o.mu.Unlock()
 
 	if o.db != nil {
-		o.db.Close()
+		_ = o.db.Close()
 	}
 
 	o.logger.Info("Stopped")
@@ -235,6 +235,8 @@ func (o *Output) Stop() error {
 }
 
 // flush writes buffered samples to ClickHouse
+//
+//nolint:gocyclo // complexity is acceptable for batch processing with error handling
 func (o *Output) flush() {
 	// Quick early exit check (before acquiring WaitGroup)
 	o.mu.RLock()
@@ -277,19 +279,19 @@ func (o *Output) flush() {
 	start := time.Now()
 
 	// Prepare batch insert
-	batch, err := db.Begin()
+	batch, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		logger.Error("Failed to begin batch", zap.Error(err))
 		return
 	}
-	defer batch.Rollback()
+	defer func() { _ = batch.Rollback() }()
 
-	stmt, err := batch.Prepare(insertQuery)
+	stmt, err := batch.PrepareContext(ctx, insertQuery)
 	if err != nil {
 		logger.Error("Failed to prepare statement", zap.Error(err))
 		return
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	count := 0
 	totalSamples := 0
@@ -357,7 +359,7 @@ func (o *Output) flush() {
 
 				// Return pooled resources for reuse
 				// Row buffer is always returned
-				compatibleRowPool.Put(row)
+				compatibleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
 				// Tag map is returned after ExecContext completes
 				tagMapPool.Put(cs.ExtraTags)
 			} else {
@@ -376,7 +378,7 @@ func (o *Output) flush() {
 
 				// Return pooled resources for reuse
 				// Row buffer is always returned
-				simpleRowPool.Put(row)
+				simpleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
 				// Tag map is returned after ExecContext completes
 				tagMapPool.Put(ss.Tags)
 			}

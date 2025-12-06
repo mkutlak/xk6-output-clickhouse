@@ -123,16 +123,18 @@ func validateFileReadable(path string) error {
 	}
 
 	// Try to open the file to verify readability
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 - path is validated by caller
 	if err != nil {
 		return fmt.Errorf("file is not readable: %s: %w", path, err)
 	}
-	file.Close()
+	defer func() { _ = file.Close() }()
 
 	return nil
 }
 
 // Validate checks the configuration for validity
+//
+//nolint:gocyclo // complexity is acceptable for validation with many fields
 func (c Config) Validate() error {
 	if c.Addr == "" {
 		return fmt.Errorf("clickhouse address is required")
@@ -219,6 +221,8 @@ func NewConfig() Config {
 }
 
 // ParseConfig parses the configuration from output.Params
+//
+//nolint:gocyclo // complexity is acceptable for parsing multiple config sources
 func ParseConfig(params output.Params) (Config, error) {
 	cfg := NewConfig()
 
@@ -406,14 +410,14 @@ func ParseConfig(params output.Params) (Config, error) {
 }
 
 // BuildTLSConfig builds a *tls.Config from the TLSConfig settings
-// Returns nil if TLS is not enabled
+// Returns nil, nil if TLS is not enabled (valid nil value, not an error)
 func (tc TLSConfig) BuildTLSConfig() (*tls.Config, error) {
 	if !tc.Enabled {
-		return nil, nil
+		return nil, nil //nolint:nilnil // nil TLS config is valid when TLS is disabled
 	}
 
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: tc.InsecureSkipVerify,
+		InsecureSkipVerify: tc.InsecureSkipVerify, //nolint:gosec // G402: User-configurable option for testing purposes
 		ServerName:         tc.ServerName,
 	}
 

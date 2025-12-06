@@ -63,7 +63,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 
 	err = conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", dbName))
 	require.NoError(t, err)
-	conn.Close()
+	require.NoError(t, conn.Close())
 
 	// Create the Output
 	params := output.Params{
@@ -84,7 +84,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	// Start the output
 	err = out.Start()
 	require.NoError(t, err)
-	defer out.Stop()
+	defer func() { require.NoError(t, out.Stop()) }()
 
 	// Create a sample
 	registry := metrics.NewRegistry()
@@ -113,10 +113,10 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	// Verify data in ClickHouse
 	verifyDB, err := sql.Open("clickhouse", fmt.Sprintf("clickhouse://default:password@%s/%s", endpoint, dbName))
 	require.NoError(t, err)
-	defer verifyDB.Close()
+	defer func() { require.NoError(t, verifyDB.Close()) }()
 
 	var count int
-	err = verifyDB.QueryRow(fmt.Sprintf("SELECT count() FROM %s", tableName)).Scan(&count)
+	err = verifyDB.QueryRowContext(ctx, fmt.Sprintf("SELECT count() FROM %s", tableName)).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "Should have 1 row")
 
@@ -125,7 +125,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	var tags map[string]string
 
 	// In simple schema: timestamp, metric, value, tags
-	err = verifyDB.QueryRow(fmt.Sprintf("SELECT metric, value, tags FROM %s", tableName)).Scan(&metricName, &metricValue, &tags)
+	err = verifyDB.QueryRowContext(ctx, fmt.Sprintf("SELECT metric, value, tags FROM %s", tableName)).Scan(&metricName, &metricValue, &tags)
 	require.NoError(t, err)
 
 	assert.Equal(t, "test_metric", metricName)

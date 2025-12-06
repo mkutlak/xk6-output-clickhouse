@@ -470,11 +470,9 @@ func TestConfigErrorScenarios(t *testing.T) {
 					assert.Contains(t, err.Error(), tt.errorContains)
 				}
 				assert.Nil(t, out)
-			} else {
-				if err != nil {
-					// Some tests expect error but may not get one
-					t.Logf("Got error (may be expected): %v", err)
-				}
+			} else if err != nil {
+				// Some tests expect error but may not get one
+				t.Logf("Got error (may be expected): %v", err)
 			}
 		})
 	}

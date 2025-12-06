@@ -40,9 +40,9 @@ func TestRegistration(t *testing.T) {
 		require.NoError(t, err, "New function should create output without error")
 		require.NotNil(t, out, "New function should return non-nil output")
 
-		// Verify it's the correct type
-		_, ok := out.(output.Output)
-		assert.True(t, ok, "New function should return type implementing output.Output interface")
+		// Verify it's the correct type (compile-time check)
+		var _ output.Output = out //nolint:staticcheck // QF1011 is wrong, we're doing explicit type check
+		assert.NotNil(t, out, "New function should return type implementing output.Output interface")
 	})
 
 	t.Run("New function returns proper Output type", func(t *testing.T) {
@@ -209,8 +209,9 @@ func TestOutputInterface(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, out)
 
-		// Verify all required methods exist
-		var _ output.Output = out
+		// Verify all required methods exist (compile-time check)
+		var iface output.Output = out //nolint:staticcheck // ST1023 is wrong, we're doing explicit type check
+		_ = iface
 
 		// Test Description method
 		desc := out.Description()

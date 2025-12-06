@@ -6,7 +6,5 @@ import (
 )
 
 func init() {
-	output.RegisterExtension("clickhouse", func(params output.Params) (output.Output, error) {
-		return clickhouse.New(params)
-	})
+	output.RegisterExtension("clickhouse", clickhouse.New)
 }

@@ -12,7 +12,7 @@ import (
 
 // StartClickHouseContainer starts a ClickHouse container for testing
 // Returns the endpoint address (host:port) and a cleanup function
-func StartClickHouseContainer(t *testing.T) (string, func()) {
+func StartClickHouseContainer(t *testing.T) (endpoint string, cleanup func()) {
 	t.Helper()
 
 	if testing.Short() {
@@ -30,14 +30,14 @@ func StartClickHouseContainer(t *testing.T) (string, func()) {
 	)
 	require.NoError(t, err)
 
-	cleanup := func() {
+	cleanup = func() {
 		if err := clickhouseContainer.Terminate(ctx); err != nil {
 			t.Logf("failed to terminate container: %s", err)
 		}
 	}
 
 	// Get container endpoint
-	endpoint, err := clickhouseContainer.PortEndpoint(ctx, "9000/tcp", "")
+	endpoint, err = clickhouseContainer.PortEndpoint(ctx, "9000/tcp", "")
 	if err != nil {
 		cleanup()
 		require.NoError(t, err)
@@ -63,7 +63,7 @@ func CreateDatabase(t *testing.T, endpoint, dbName string) {
 
 	err = conn.Exec(context.Background(), fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", dbName))
 	require.NoError(t, err)
-	conn.Close()
+	require.NoError(t, conn.Close())
 }
 
 // GetTestConfig returns a valid config pointing to the given endpoint

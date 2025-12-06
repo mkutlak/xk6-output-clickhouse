@@ -102,7 +102,7 @@ func ConvertToCompatible(ctx context.Context, sample metrics.Sample) (Compatible
 		}
 		// If not set from tags, generate from timestamp
 		if cs.BuildID == 0 {
-			cs.BuildID = uint32(time.Now().Unix())
+			cs.BuildID = safeUnixToUint32(time.Now().Unix())
 		}
 
 		// String fields
@@ -146,7 +146,7 @@ func ConvertToCompatible(ctx context.Context, sample metrics.Sample) (Compatible
 	} else {
 		// No tags, use defaults
 		cs.TestID = "default"
-		cs.BuildID = uint32(time.Now().Unix())
+		cs.BuildID = safeUnixToUint32(time.Now().Unix())
 		cs.Branch = "master"
 	}
 
@@ -178,8 +178,20 @@ func getAndDelete(m map[string]string, key string) (string, bool) {
 	return "", false
 }
 
+// safeUnixToUint32 safely converts a Unix timestamp to uint32, clamping to max uint32 if overflow
+func safeUnixToUint32(unix int64) uint32 {
+	const maxUint32 = 1<<32 - 1
+	if unix < 0 {
+		return 0
+	}
+	if unix > maxUint32 {
+		return maxUint32
+	}
+	return uint32(unix)
+}
+
 // getAndDeleteWithDefault gets a value from the map, deletes the key, and returns a default if not found
-func getAndDeleteWithDefault(m map[string]string, key string, defaultValue string) string {
+func getAndDeleteWithDefault(m map[string]string, key, defaultValue string) string {
 	if val, ok := m[key]; ok {
 		delete(m, key)
 		return val
