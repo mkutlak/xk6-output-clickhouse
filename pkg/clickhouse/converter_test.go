@@ -334,10 +334,10 @@ func TestClearMap(t *testing.T) {
 		{
 			name: "clear map with special characters",
 			inputMap: map[string]string{
-				"key-1":   "value1",
-				"key_2":   "value2",
-				"key.3":   "value3",
-				"キー":     "値",
+				"key-1": "value1",
+				"key_2": "value2",
+				"key.3": "value3",
+				"キー":    "値",
 			},
 		},
 	}
@@ -368,9 +368,9 @@ func TestConvertToSimpleEdgeCases(t *testing.T) {
 	registry := metrics.NewRegistry()
 
 	tests := []struct {
-		name          string
-		setupSample   func() metrics.Sample
-		checkResult   func(t *testing.T, ss SimpleSample)
+		name        string
+		setupSample func() metrics.Sample
+		checkResult func(t *testing.T, ss SimpleSample)
 	}{
 		{
 			name: "sample with nil tags",

@@ -45,11 +45,11 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	// Config for the output
 	dbName := "k6"
 	tableName := "samples"
-	
+
 	// We need to create the database first because the output expects it (unless using default)
 	// The container starts with 'default' database. The output tries to create schema in the configured DB.
 	// Let's connect and create the 'k6' database.
-	
+
 	// Connect to ClickHouse to prepare DB
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{endpoint},
@@ -60,7 +60,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	
+
 	err = conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", dbName))
 	require.NoError(t, err)
 	conn.Close()
@@ -89,7 +89,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	// Create a sample
 	registry := metrics.NewRegistry()
 	metric := registry.MustNewMetric("test_metric", metrics.Trend)
-	
+
 	now := time.Now()
 	sample := metrics.Sample{
 		TimeSeries: metrics.TimeSeries{
@@ -123,7 +123,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	var metricName string
 	var metricValue float64
 	var tags map[string]string
-	
+
 	// In simple schema: timestamp, metric, value, tags
 	err = verifyDB.QueryRow(fmt.Sprintf("SELECT metric, value, tags FROM %s", tableName)).Scan(&metricName, &metricValue, &tags)
 	require.NoError(t, err)

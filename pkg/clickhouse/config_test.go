@@ -187,7 +187,7 @@ func TestParseConfig(t *testing.T) {
 			},
 			expectedConfig: Config{
 				Addr:         "localhost:9000", // Without scheme, Host is empty, defaults remain for Addr
-				Database:     "prod",          // But query params are parsed
+				Database:     "prod",           // But query params are parsed
 				Table:        "metrics",
 				PushInterval: 1 * time.Second,
 			},

@@ -56,7 +56,7 @@ func TestNewErrorScenarios(t *testing.T) {
 					"addr": "",
 				}),
 			},
-			expectError:   false, // Empty addr uses default
+			expectError: false, // Empty addr uses default
 		},
 		{
 			name: "invalid database name - SQL injection attempt",
@@ -433,9 +433,9 @@ func TestConfigErrorScenarios(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name:          "invalid URL format",
-			configArg:     "not-a-valid-url",
-			expectError:   false, // URL parsing is lenient, this might not error
+			name:        "invalid URL format",
+			configArg:   "not-a-valid-url",
+			expectError: false, // URL parsing is lenient, this might not error
 		},
 		{
 			name:          "malformed JSON",
@@ -444,7 +444,7 @@ func TestConfigErrorScenarios(t *testing.T) {
 			errorContains: "json",
 		},
 		{
-			name: "conflicting config sources",
+			name:      "conflicting config sources",
 			configArg: "localhost:9000?database=db1",
 			jsonConfig: mustMarshalJSON(map[string]interface{}{
 				"database": "db2",
