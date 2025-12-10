@@ -1,3 +1,13 @@
+## [0.1.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.0.1...v0.1.0) (2025-12-10)
+
+### Features
+
+* Introduce pluggable schema system and rename extension ([798dadd](https://github.com/mkutlak/xk6-output-clickhouse/commit/798dadddbadb03ea7310481586a44b99fdfdfb79))
+
+### Bug Fixes
+
+* gosec SQL string formatting justification ([f06b51e](https://github.com/mkutlak/xk6-output-clickhouse/commit/f06b51eb73f0a2276f22b1a90dddd72dc9d85a5a))
+
 ## 1.0.0 (2025-12-06)
 
 ### Features
