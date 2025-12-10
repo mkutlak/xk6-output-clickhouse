@@ -73,6 +73,7 @@ func (s CompatibleSchema) CreateSchema(ctx context.Context, db *sql.DB, database
 	}
 
 	// Create table with optimized schema
+	//nolint:gosec // G201: SQL string formatting is safe - identifiers are validated with isValidIdentifier() (alphanumeric only) and escaped with backticks
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.%s (
 			timestamp         DateTime64(%d, 'UTC') CODEC(DoubleDelta, ZSTD(1)),
