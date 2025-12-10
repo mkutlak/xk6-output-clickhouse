@@ -205,8 +205,8 @@ Example queries:
 
 ```sql
 -- View recent metrics
-SELECT * FROM k6.samples 
-ORDER BY timestamp DESC 
+SELECT * FROM k6.samples
+ORDER BY timestamp DESC
 LIMIT 100;
 
 -- Average HTTP request duration
