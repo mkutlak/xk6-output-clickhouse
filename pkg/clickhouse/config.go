@@ -160,8 +160,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("push interval must be positive, got %v", c.PushInterval)
 	}
 
-	if c.SchemaMode != "simple" && c.SchemaMode != "compatible" {
-		return fmt.Errorf("invalid schemaMode: %s (must be 'simple' or 'compatible')", c.SchemaMode)
+	// Validate schema mode against registered implementations
+	if _, err := GetSchema(c.SchemaMode); err != nil {
+		return fmt.Errorf("invalid schemaMode: %s (available: %v)", c.SchemaMode, AvailableSchemas())
 	}
 
 	// Validate TLS configuration

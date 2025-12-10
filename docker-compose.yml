@@ -48,7 +48,7 @@ services:
     image: xk6-output-clickhouse:latest
     container_name: xk6-runner
     environment:
-      K6_OUT: ${K6_OUT:-clickhouse=host.docker.internal:9000?database=k6&user=default&password=password&schemaMode=compatible}
+      K6_OUT: ${K6_OUT:-xk6-clickhouse=host.docker.internal:9000?database=k6&user=default&password=password&schemaMode=compatible}
       K6_CLICKHOUSE_ADDR: ${K6_CLICKHOUSE_ADDR:-host.docker.internal:9000}
       K6_CLICKHOUSE_DB: ${K6_CLICKHOUSE_DB:-k6}
       K6_CLICKHOUSE_USER: ${K6_CLICKHOUSE_USER:-default}

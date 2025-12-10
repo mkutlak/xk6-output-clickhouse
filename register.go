@@ -6,5 +6,5 @@ import (
 )
 
 func init() {
-	output.RegisterExtension("clickhouse", clickhouse.New)
+	output.RegisterExtension("xk6-clickhouse", clickhouse.New)
 }

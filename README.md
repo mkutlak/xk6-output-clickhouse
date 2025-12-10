@@ -186,7 +186,7 @@ export const options = {
 
 ## Schema
 
-The extension creates a table with this structure:
+The extension creates a table with this structure (simple schema, default):
 
 ```sql
 CREATE TABLE k6.samples (
@@ -198,6 +198,151 @@ CREATE TABLE k6.samples (
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (metric, timestamp);
 ```
+
+## Custom Schemas
+
+This extension supports custom schemas via Go interfaces. This allows you to:
+- Define your own table structure with specific columns for your tags
+- Use typed columns (e.g., `UInt32` for build IDs) for better query performance
+- Customize the `ORDER BY` clause for your query patterns
+
+### Creating a Custom Schema
+
+1. **Fork this repository**
+
+2. **Create a new file** (e.g., `pkg/clickhouse/schema_custom.go`):
+
+```go
+package clickhouse
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+
+    "go.k6.io/k6/metrics"
+)
+
+func init() {
+    RegisterSchema(SchemaImplementation{
+        Name:      "custom",
+        Schema:    MyCustomSchema{},
+        Converter: MyCustomConverter{},
+    })
+}
+
+type MyCustomSchema struct{}
+
+func (s MyCustomSchema) CreateSchema(ctx context.Context, db *sql.DB, database, table string) error {
+    // Create database
+    _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", escapeIdentifier(database)))
+    if err != nil {
+        return fmt.Errorf("failed to create database: %w", err)
+    }
+
+    // Create table with your custom columns
+    query := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS %s.%s (
+            timestamp DateTime64(3),
+            metric LowCardinality(String),
+            value Float64,
+            testid LowCardinality(String),
+            branch LowCardinality(String),
+            build_id UInt32,
+            scenario LowCardinality(String),
+            extra_tags Map(String, String)
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(timestamp)
+        ORDER BY (metric, testid, branch, timestamp)
+    `, escapeIdentifier(database), escapeIdentifier(table))
+
+    _, err = db.ExecContext(ctx, query)
+    return err
+}
+
+func (s MyCustomSchema) InsertQuery(database, table string) string {
+    return fmt.Sprintf(
+        "INSERT INTO %s.%s (timestamp, metric, value, testid, branch, build_id, scenario, extra_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        escapeIdentifier(database), escapeIdentifier(table))
+}
+
+func (s MyCustomSchema) ColumnCount() int { return 8 }
+
+type MyCustomConverter struct{}
+
+func (c MyCustomConverter) Convert(ctx context.Context, sample metrics.Sample) ([]interface{}, error) {
+    // Extract tags
+    tags := make(map[string]string)
+    var testid, branch, scenario string
+    var buildID uint32
+
+    if sample.Tags != nil {
+        for k, v := range sample.Tags.Map() {
+            switch k {
+            case "testid":
+                testid = v
+            case "branch":
+                branch = v
+            case "buildId":
+                // Parse build ID as uint32
+                if id, err := strconv.ParseUint(v, 10, 32); err == nil {
+                    buildID = uint32(id)
+                }
+            case "scenario":
+                scenario = v
+            default:
+                tags[k] = v
+            }
+        }
+    }
+
+    return []interface{}{
+        sample.Time,
+        sample.Metric.Name,
+        sample.Value,
+        testid,
+        branch,
+        buildID,
+        scenario,
+        tags,
+    }, nil
+}
+
+func (c MyCustomConverter) Release(row []interface{}) {
+    // Return any pooled resources if using sync.Pool
+}
+```
+
+3. **Build your custom k6**:
+
+```bash
+xk6 build --with github.com/yourorg/xk6-output-clickhouse
+```
+
+4. **Use your custom schema**:
+
+```bash
+K6_CLICKHOUSE_SCHEMA_MODE=custom ./k6 run script.js
+```
+
+### Interfaces Reference
+
+```go
+// SchemaCreator creates and manages ClickHouse table schemas
+type SchemaCreator interface {
+    CreateSchema(ctx context.Context, db *sql.DB, database, table string) error
+    InsertQuery(database, table string) string
+    ColumnCount() int
+}
+
+// SampleConverter converts k6 metric samples to rows for insertion
+type SampleConverter interface {
+    Convert(ctx context.Context, sample metrics.Sample) ([]interface{}, error)
+    Release(row []interface{})
+}
+```
+
+See `schema_compat.go` for a complete example of a custom schema implementation with typed columns and tag extraction.
 
 ## Querying Metrics
 
