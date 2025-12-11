@@ -470,15 +470,15 @@ func TestCompatibleConverter_Convert(t *testing.T) {
 		assert.Len(t, row, 21)
 
 		// Verify key columns
-		assert.Equal(t, now, row[0])           // timestamp
-		assert.Equal(t, "http_reqs", row[1])   // metric
-		assert.Equal(t, int8(1), row[2])       // metric_type (Counter = 1)
-		assert.Equal(t, 1.0, row[3])           // value
-		assert.Equal(t, "test-123", row[4])    // testid
-		assert.Equal(t, uint32(456), row[7])   // build_id
-		assert.Equal(t, "GET", row[11])        // method
-		assert.Equal(t, uint16(200), row[12])  // status
-		assert.Equal(t, true, row[13])         // expected_response
+		assert.Equal(t, now, row[0])          // timestamp
+		assert.Equal(t, "http_reqs", row[1])  // metric
+		assert.Equal(t, int8(1), row[2])      // metric_type (Counter = 1)
+		assert.Equal(t, 1.0, row[3])          // value
+		assert.Equal(t, "test-123", row[4])   // testid
+		assert.Equal(t, uint32(456), row[7])  // build_id
+		assert.Equal(t, "GET", row[11])       // method
+		assert.Equal(t, uint16(200), row[12]) // status
+		assert.Equal(t, true, row[13])        // expected_response
 	})
 
 	t.Run("convert error returns nil row", func(t *testing.T) {
