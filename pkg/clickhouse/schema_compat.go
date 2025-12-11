@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"strconv"
 	"time"
 
@@ -233,9 +234,7 @@ func convertToCompatible(sample metrics.Sample) (compatibleSample, error) {
 		}
 
 		// Remaining tags go to extra_tags
-		for k, v := range tagMap {
-			cs.ExtraTags[k] = v
-		}
+		maps.Copy(cs.ExtraTags, tagMap)
 	} else {
 		// No tags, use defaults
 		cs.TestID = "default"

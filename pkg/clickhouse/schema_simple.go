@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"time"
 
 	"go.k6.io/k6/metrics"
@@ -105,9 +106,7 @@ func convertToSimple(sample metrics.Sample) simpleSample {
 	}
 
 	if sample.Tags != nil {
-		for k, v := range sample.Tags.Map() {
-			ss.Tags[k] = v
-		}
+		maps.Copy(ss.Tags, sample.Tags.Map())
 	}
 
 	return ss
