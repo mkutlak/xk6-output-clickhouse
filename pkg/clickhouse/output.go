@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -75,6 +76,26 @@ type Output struct {
 	// Context cancellation for graceful shutdown
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
+
+	// Error metrics (atomic for lock-free concurrent access)
+	convertErrors    atomic.Uint64 // Cumulative count of sample conversion failures
+	insertErrors     atomic.Uint64 // Cumulative count of database insert failures
+	samplesProcessed atomic.Uint64 // Cumulative count of successfully inserted samples
+}
+
+// ErrorMetrics contains cumulative error statistics from flush operations.
+// All counters are cumulative since output startup and are thread-safe.
+type ErrorMetrics struct {
+	// ConvertErrors is the total number of sample conversion failures.
+	// These occur when a k6 sample cannot be transformed to a database row.
+	ConvertErrors uint64
+
+	// InsertErrors is the total number of database insert failures.
+	// These occur when ExecContext fails for individual samples.
+	InsertErrors uint64
+
+	// SamplesProcessed is the total number of samples successfully inserted.
+	SamplesProcessed uint64
 }
 
 // New creates a new ClickHouse output
@@ -231,6 +252,16 @@ func (o *Output) Stop() error {
 	return nil
 }
 
+// GetErrorMetrics returns cumulative error statistics from flush operations.
+// All counters are thread-safe and can be called concurrently with flush operations.
+func (o *Output) GetErrorMetrics() ErrorMetrics {
+	return ErrorMetrics{
+		ConvertErrors:    o.convertErrors.Load(),
+		InsertErrors:     o.insertErrors.Load(),
+		SamplesProcessed: o.samplesProcessed.Load(),
+	}
+}
+
 // flush writes buffered samples to ClickHouse
 //
 //nolint:gocyclo // complexity is acceptable for batch processing with error handling
@@ -293,6 +324,9 @@ func (o *Output) flush() {
 	count := 0
 	totalSamples := 0
 
+	// Track errors within this flush operation
+	var flushConvertErrors, flushInsertErrors uint64
+
 	// Calculate total samples for progress tracking
 	for _, container := range samples {
 		totalSamples += len(container.GetSamples())
@@ -318,6 +352,7 @@ func (o *Output) flush() {
 			// Convert sample using the schema's converter
 			row, convErr := converter.Convert(ctx, sample)
 			if convErr != nil {
+				flushConvertErrors++
 				logger.Error("failed to convert sample", zap.Error(convErr))
 				continue
 			}
@@ -329,6 +364,7 @@ func (o *Output) flush() {
 			converter.Release(row)
 
 			if execErr != nil {
+				flushInsertErrors++
 				logger.Error("Failed to insert sample", zap.Error(execErr))
 				continue
 			}
@@ -341,7 +377,26 @@ func (o *Output) flush() {
 		return
 	}
 
-	logger.Debug("Flushed metrics",
-		zap.Int("samples", count),
-		zap.Duration("elapsed", time.Since(start)))
+	// Update cumulative atomic counters
+	if flushConvertErrors > 0 {
+		o.convertErrors.Add(flushConvertErrors)
+	}
+	if flushInsertErrors > 0 {
+		o.insertErrors.Add(flushInsertErrors)
+	}
+	o.samplesProcessed.Add(uint64(count))
+
+	// Log summary if any errors occurred during this flush
+	if flushConvertErrors > 0 || flushInsertErrors > 0 {
+		logger.Warn("Flush completed with errors",
+			zap.Uint64("convertErrors", flushConvertErrors),
+			zap.Uint64("insertErrors", flushInsertErrors),
+			zap.Int("successfulInserts", count),
+			zap.Int("totalSamples", totalSamples),
+			zap.Duration("elapsed", time.Since(start)))
+	} else {
+		logger.Debug("Flushed metrics",
+			zap.Int("samples", count),
+			zap.Duration("elapsed", time.Since(start)))
+	}
 }

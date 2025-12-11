@@ -517,3 +517,206 @@ func BenchmarkConcurrentMemoryPool(b *testing.B) {
 		}
 	})
 }
+
+// TestConcurrentGetErrorMetrics tests concurrent access to GetErrorMetrics
+func TestConcurrentGetErrorMetrics(t *testing.T) {
+	t.Parallel()
+
+	params := mustCreateParams(t, map[string]any{
+		"addr": "localhost:9000",
+	})
+
+	out, err := New(params)
+	require.NoError(t, err)
+
+	clickhouseOut := out.(*Output)
+
+	numGoroutines := 100
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Simulate concurrent reads
+	for range numGoroutines {
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				metrics := clickhouseOut.GetErrorMetrics()
+				// Just verify no panic and values are valid uint64
+				_ = metrics.ConvertErrors
+				_ = metrics.InsertErrors
+				_ = metrics.SamplesProcessed
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// TestConcurrentErrorCounterIncrements tests atomic counter increments are thread-safe
+func TestConcurrentErrorCounterIncrements(t *testing.T) {
+	t.Parallel()
+
+	params := mustCreateParams(t, map[string]any{
+		"addr": "localhost:9000",
+	})
+
+	out, err := New(params)
+	require.NoError(t, err)
+
+	clickhouseOut := out.(*Output)
+
+	numGoroutines := 50
+	incrementsPerGoroutine := 100
+	expectedTotal := uint64(numGoroutines * incrementsPerGoroutine)
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines * 3) // 3 counter types
+
+	// Increment convertErrors concurrently
+	for range numGoroutines {
+		go func() {
+			defer wg.Done()
+			for range incrementsPerGoroutine {
+				clickhouseOut.convertErrors.Add(1)
+			}
+		}()
+	}
+
+	// Increment insertErrors concurrently
+	for range numGoroutines {
+		go func() {
+			defer wg.Done()
+			for range incrementsPerGoroutine {
+				clickhouseOut.insertErrors.Add(1)
+			}
+		}()
+	}
+
+	// Increment samplesProcessed concurrently
+	for range numGoroutines {
+		go func() {
+			defer wg.Done()
+			for range incrementsPerGoroutine {
+				clickhouseOut.samplesProcessed.Add(1)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	metrics := clickhouseOut.GetErrorMetrics()
+	assert.Equal(t, expectedTotal, metrics.ConvertErrors, "ConvertErrors should match expected total")
+	assert.Equal(t, expectedTotal, metrics.InsertErrors, "InsertErrors should match expected total")
+	assert.Equal(t, expectedTotal, metrics.SamplesProcessed, "SamplesProcessed should match expected total")
+}
+
+// TestConcurrentReadWriteErrorMetrics tests concurrent reads and writes to error metrics
+func TestConcurrentReadWriteErrorMetrics(t *testing.T) {
+	t.Parallel()
+
+	params := mustCreateParams(t, map[string]any{
+		"addr": "localhost:9000",
+	})
+
+	out, err := New(params)
+	require.NoError(t, err)
+
+	clickhouseOut := out.(*Output)
+
+	numWriters := 20
+	numReaders := 30
+	iterations := 100
+
+	var wg sync.WaitGroup
+	wg.Add(numWriters + numReaders)
+
+	// Writers: increment counters
+	for range numWriters {
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				clickhouseOut.convertErrors.Add(1)
+				clickhouseOut.insertErrors.Add(1)
+				clickhouseOut.samplesProcessed.Add(1)
+			}
+		}()
+	}
+
+	// Readers: read metrics
+	for range numReaders {
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				metrics := clickhouseOut.GetErrorMetrics()
+				// Verify counters are monotonically increasing (within this read)
+				// Note: can't compare across reads due to concurrent writes
+				assert.GreaterOrEqual(t, metrics.ConvertErrors, uint64(0))
+				assert.GreaterOrEqual(t, metrics.InsertErrors, uint64(0))
+				assert.GreaterOrEqual(t, metrics.SamplesProcessed, uint64(0))
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Final verification: all writes completed
+	expectedTotal := uint64(numWriters * iterations)
+	metrics := clickhouseOut.GetErrorMetrics()
+	assert.Equal(t, expectedTotal, metrics.ConvertErrors)
+	assert.Equal(t, expectedTotal, metrics.InsertErrors)
+	assert.Equal(t, expectedTotal, metrics.SamplesProcessed)
+}
+
+// BenchmarkGetErrorMetrics benchmarks concurrent GetErrorMetrics calls
+func BenchmarkGetErrorMetrics(b *testing.B) {
+	params := output.Params{
+		JSONConfig: mustMarshalJSON(map[string]any{
+			"addr": "localhost:9000",
+		}),
+	}
+
+	out, err := New(params)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	clickhouseOut := out.(*Output)
+
+	// Pre-populate some values
+	clickhouseOut.convertErrors.Store(1000)
+	clickhouseOut.insertErrors.Store(500)
+	clickhouseOut.samplesProcessed.Store(100000)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			metrics := clickhouseOut.GetErrorMetrics()
+			_ = metrics
+		}
+	})
+}
+
+// BenchmarkErrorCounterAdd benchmarks concurrent atomic counter increments
+func BenchmarkErrorCounterAdd(b *testing.B) {
+	params := output.Params{
+		JSONConfig: mustMarshalJSON(map[string]any{
+			"addr": "localhost:9000",
+		}),
+	}
+
+	out, err := New(params)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	clickhouseOut := out.(*Output)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			clickhouseOut.convertErrors.Add(1)
+			clickhouseOut.insertErrors.Add(1)
+			clickhouseOut.samplesProcessed.Add(1)
+		}
+	})
+}

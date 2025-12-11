@@ -748,3 +748,80 @@ func TestOutput_FlushEmptyBuffer(t *testing.T) {
 		})
 	})
 }
+
+// Error metrics tests
+
+func TestOutput_GetErrorMetrics_Initial(t *testing.T) {
+	t.Parallel()
+
+	params := output.Params{}
+	out, err := New(params)
+	require.NoError(t, err)
+
+	clickhouseOut := out.(*Output)
+	metrics := clickhouseOut.GetErrorMetrics()
+
+	assert.Equal(t, uint64(0), metrics.ConvertErrors, "initial ConvertErrors should be 0")
+	assert.Equal(t, uint64(0), metrics.InsertErrors, "initial InsertErrors should be 0")
+	assert.Equal(t, uint64(0), metrics.SamplesProcessed, "initial SamplesProcessed should be 0")
+}
+
+func TestErrorMetrics_Values(t *testing.T) {
+	t.Parallel()
+
+	metrics := ErrorMetrics{
+		ConvertErrors:    10,
+		InsertErrors:     5,
+		SamplesProcessed: 1000,
+	}
+
+	assert.Equal(t, uint64(10), metrics.ConvertErrors)
+	assert.Equal(t, uint64(5), metrics.InsertErrors)
+	assert.Equal(t, uint64(1000), metrics.SamplesProcessed)
+}
+
+func TestOutput_GetErrorMetrics_AfterStop(t *testing.T) {
+	t.Parallel()
+
+	params := output.Params{}
+	out, err := New(params)
+	require.NoError(t, err)
+
+	clickhouseOut := out.(*Output)
+
+	// Manually set some counter values to verify they persist after stop
+	clickhouseOut.convertErrors.Store(5)
+	clickhouseOut.insertErrors.Store(3)
+	clickhouseOut.samplesProcessed.Store(100)
+
+	err = out.Stop()
+	require.NoError(t, err)
+
+	// Metrics should still be accessible after stop
+	metrics := clickhouseOut.GetErrorMetrics()
+	assert.Equal(t, uint64(5), metrics.ConvertErrors)
+	assert.Equal(t, uint64(3), metrics.InsertErrors)
+	assert.Equal(t, uint64(100), metrics.SamplesProcessed)
+}
+
+func TestOutput_ErrorMetrics_AtomicOperations(t *testing.T) {
+	t.Parallel()
+
+	params := output.Params{}
+	out, err := New(params)
+	require.NoError(t, err)
+
+	clickhouseOut := out.(*Output)
+
+	// Test atomic Add operations
+	clickhouseOut.convertErrors.Add(5)
+	clickhouseOut.convertErrors.Add(3)
+	clickhouseOut.insertErrors.Add(2)
+	clickhouseOut.samplesProcessed.Add(100)
+	clickhouseOut.samplesProcessed.Add(50)
+
+	metrics := clickhouseOut.GetErrorMetrics()
+	assert.Equal(t, uint64(8), metrics.ConvertErrors)
+	assert.Equal(t, uint64(2), metrics.InsertErrors)
+	assert.Equal(t, uint64(150), metrics.SamplesProcessed)
+}
