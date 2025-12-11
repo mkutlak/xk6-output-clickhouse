@@ -1,7 +1,6 @@
 package clickhouse
 
 import (
-	"context"
 	"encoding/json"
 	"sync"
 	"testing"
@@ -89,7 +88,6 @@ func TestConcurrentConvertToSimple(t *testing.T) {
 	t.Run("concurrent ConvertToSimple calls", func(t *testing.T) {
 		t.Parallel()
 
-		ctx := context.Background()
 		numGoroutines := 50
 
 		var wg sync.WaitGroup
@@ -120,7 +118,7 @@ func TestConcurrentConvertToSimple(t *testing.T) {
 
 				// Convert multiple times in the same goroutine
 				for j := 0; j < 100; j++ {
-					ss := ConvertToSimple(ctx, sample)
+					ss := convertToSimple(sample)
 					if ss.Metric != "http_reqs" {
 						errors <- assert.AnError
 						return
@@ -146,7 +144,6 @@ func TestConcurrentConvertToCompatible(t *testing.T) {
 	t.Run("concurrent ConvertToCompatible calls", func(t *testing.T) {
 		t.Parallel()
 
-		ctx := context.Background()
 		numGoroutines := 50
 
 		var wg sync.WaitGroup
@@ -175,7 +172,7 @@ func TestConcurrentConvertToCompatible(t *testing.T) {
 				}
 
 				for j := 0; j < 100; j++ {
-					cs, err := ConvertToCompatible(ctx, sample)
+					cs, err := convertToCompatible(sample)
 					if err != nil {
 						errors <- err
 						return
@@ -441,7 +438,6 @@ func TestRaceConditions(t *testing.T) {
 	t.Run("no race in conversion pipeline", func(t *testing.T) {
 		t.Parallel()
 
-		ctx := context.Background()
 		numGoroutines := 20
 
 		var wg sync.WaitGroup
@@ -468,11 +464,11 @@ func TestRaceConditions(t *testing.T) {
 				}
 
 				// Convert to simple
-				ss := ConvertToSimple(ctx, sample)
+				ss := convertToSimple(sample)
 				assert.NotNil(t, ss.Tags)
 
 				// Convert to compatible
-				cs, err := ConvertToCompatible(ctx, sample)
+				cs, err := convertToCompatible(sample)
 				assert.NoError(t, err)
 				assert.NotNil(t, cs.ExtraTags)
 			}(i)
@@ -482,9 +478,8 @@ func TestRaceConditions(t *testing.T) {
 	})
 }
 
-// BenchmarkConcurrentConvertToSimple benchmarks concurrent ConvertToSimple calls
+// BenchmarkConcurrentConvertToSimple benchmarks concurrent convertToSimple calls
 func BenchmarkConcurrentConvertToSimple(b *testing.B) {
-	ctx := context.Background()
 	registry := metrics.NewRegistry()
 	metric := registry.MustNewMetric("http_req_duration", metrics.Trend)
 	tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
@@ -504,7 +499,7 @@ func BenchmarkConcurrentConvertToSimple(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			ss := ConvertToSimple(ctx, sample)
+			ss := convertToSimple(sample)
 			_ = ss
 		}
 	})

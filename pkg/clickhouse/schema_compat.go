@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
+	"time"
 
 	"go.k6.io/k6/metrics"
 )
@@ -130,13 +132,127 @@ func (s CompatibleSchema) ColumnCount() int {
 	return 21
 }
 
+// compatibleSample represents a sample for the compatible schema.
+type compatibleSample struct {
+	Timestamp        time.Time
+	BuildID          uint32
+	Release          string
+	Version          string
+	Branch           string
+	Metric           string
+	MetricType       int8
+	Value            float64
+	TestID           string
+	UIFeature        string
+	Scenario         string
+	Name             string
+	Method           string
+	Status           uint16
+	ExpectedResponse bool
+	ErrorCode        string
+	Rating           string
+	ResourceType     string
+	CheckName        string
+	GroupName        string
+	ExtraTags        map[string]string
+}
+
+// convertToCompatible converts a k6 sample to the compatible schema format.
+func convertToCompatible(sample metrics.Sample) (compatibleSample, error) {
+	// Get a reusable map from the pool to reduce allocations
+	extraTags := tagMapPool.Get().(map[string]string)
+	clearMap(extraTags) // Ensure map is clean before use
+
+	cs := compatibleSample{
+		Timestamp:        sample.Time,
+		Metric:           sample.Metric.Name,
+		Value:            sample.Value,
+		MetricType:       mapMetricType(sample.Metric.Type),
+		ExpectedResponse: true, // default
+		ExtraTags:        extraTags,
+	}
+
+	// Extract and map tags to columns
+	if sample.Tags != nil {
+		tagMap := sample.Tags.Map()
+
+		// TestID (with aliases)
+		if testID, ok := getAndDelete(tagMap, "testid"); ok {
+			cs.TestID = testID
+		} else if testID, ok := getAndDelete(tagMap, "test_run_id"); ok {
+			cs.TestID = testID
+		} else {
+			cs.TestID = "default"
+		}
+
+		// BuildID (with type conversion)
+		if buildID, ok := getAndDelete(tagMap, "buildId"); ok {
+			if id, err := strconv.ParseUint(buildID, 10, 32); err == nil {
+				cs.BuildID = uint32(id)
+			} else {
+				return cs, fmt.Errorf("failed to parse buildId: %w", err)
+			}
+		}
+		// If not set from tags, generate from timestamp
+		if cs.BuildID == 0 {
+			cs.BuildID = safeUnixToUint32(time.Now().Unix())
+		}
+
+		// String fields
+		cs.Release = getAndDeleteWithDefault(tagMap, "release", "")
+		cs.Version = getAndDeleteWithDefault(tagMap, "version", "")
+		cs.Branch = getAndDeleteWithDefault(tagMap, "branch", "master")
+		cs.UIFeature = getAndDeleteWithDefault(tagMap, "ui_feature", "")
+		cs.Scenario = getAndDeleteWithDefault(tagMap, "scenario", "")
+		cs.Name = getAndDeleteWithDefault(tagMap, "name", "")
+		cs.Method = getAndDeleteWithDefault(tagMap, "method", "")
+		cs.ErrorCode = getAndDeleteWithDefault(tagMap, "error_code", "")
+		cs.Rating = getAndDeleteWithDefault(tagMap, "rating", "")
+		cs.ResourceType = getAndDeleteWithDefault(tagMap, "resource_type", "")
+		cs.CheckName = getAndDeleteWithDefault(tagMap, "check_name", "")
+
+		// GroupName (with alias)
+		if groupName, ok := getAndDelete(tagMap, "group_name"); ok {
+			cs.GroupName = groupName
+		} else {
+			cs.GroupName = getAndDeleteWithDefault(tagMap, "group", "")
+		}
+
+		// Status (with type conversion)
+		if statusStr, ok := getAndDelete(tagMap, "status"); ok {
+			if statusInt, err := strconv.ParseUint(statusStr, 10, 16); err == nil {
+				cs.Status = uint16(statusInt)
+			} else {
+				return cs, fmt.Errorf("failed to parse status: %w", err)
+			}
+		}
+
+		// ExpectedResponse (with type conversion)
+		if expResp, ok := getAndDelete(tagMap, "expected_response"); ok {
+			cs.ExpectedResponse = expResp == "true"
+		}
+
+		// Remaining tags go to extra_tags
+		for k, v := range tagMap {
+			cs.ExtraTags[k] = v
+		}
+	} else {
+		// No tags, use defaults
+		cs.TestID = "default"
+		cs.BuildID = safeUnixToUint32(time.Now().Unix())
+		cs.Branch = "master"
+	}
+
+	return cs, nil
+}
+
 // CompatibleConverter implements SampleConverter for the compatible schema.
 // It extracts known k6 tags into dedicated columns with type conversion.
 type CompatibleConverter struct{}
 
 // Convert transforms a k6 sample into a row for the compatible schema.
 func (c CompatibleConverter) Convert(ctx context.Context, sample metrics.Sample) ([]any, error) {
-	cs, err := ConvertToCompatible(ctx, sample)
+	cs, err := convertToCompatible(sample)
 	if err != nil {
 		// Return tag map to pool even on error
 		tagMapPool.Put(cs.ExtraTags)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"go.k6.io/k6/metrics"
 )
@@ -82,13 +83,43 @@ func (s SimpleSchema) ColumnCount() int {
 	return 4
 }
 
+// simpleSample represents a sample for the simple schema.
+type simpleSample struct {
+	Timestamp time.Time
+	Metric    string
+	Value     float64
+	Tags      map[string]string
+}
+
+// convertToSimple converts a k6 sample to the simple schema format.
+func convertToSimple(sample metrics.Sample) simpleSample {
+	// Get a reusable map from the pool to reduce allocations
+	tags := tagMapPool.Get().(map[string]string)
+	clearMap(tags) // Ensure map is clean before use
+
+	ss := simpleSample{
+		Timestamp: sample.Time,
+		Metric:    sample.Metric.Name,
+		Value:     sample.Value,
+		Tags:      tags,
+	}
+
+	if sample.Tags != nil {
+		for k, v := range sample.Tags.Map() {
+			ss.Tags[k] = v
+		}
+	}
+
+	return ss
+}
+
 // SimpleConverter implements SampleConverter for the simple schema.
 // All k6 tags are stored as-is in the tags Map column.
 type SimpleConverter struct{}
 
 // Convert transforms a k6 sample into a row for the simple schema.
 func (c SimpleConverter) Convert(ctx context.Context, sample metrics.Sample) ([]any, error) {
-	ss := ConvertToSimple(ctx, sample)
+	ss := convertToSimple(sample)
 
 	// Get row buffer from pool
 	row := simpleRowPool.Get().([]any)

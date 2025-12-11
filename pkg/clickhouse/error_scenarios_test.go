@@ -1,7 +1,6 @@
 package clickhouse
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -130,11 +129,9 @@ func TestNewErrorScenarios(t *testing.T) {
 	}
 }
 
-// TestConvertToCompatibleErrorScenarios tests error scenarios in ConvertToCompatible
+// TestConvertToCompatibleErrorScenarios tests error scenarios in convertToCompatible
 func TestConvertToCompatibleErrorScenarios(t *testing.T) {
 	t.Parallel()
-
-	ctx := context.Background()
 	registry := metrics.NewRegistry()
 
 	tests := []struct {
@@ -144,11 +141,11 @@ func TestConvertToCompatibleErrorScenarios(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name: "invalid build_id - non-numeric",
+			name: "invalid buildId - non-numeric",
 			setupSample: func() metrics.Sample {
 				metric := registry.MustNewMetric("http_reqs", metrics.Counter)
 				tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
-					"build_id": "not-a-number",
+					"buildId": "not-a-number",
 				})
 				return metrics.Sample{
 					TimeSeries: metrics.TimeSeries{
@@ -160,14 +157,14 @@ func TestConvertToCompatibleErrorScenarios(t *testing.T) {
 				}
 			},
 			expectError:   true,
-			errorContains: "build_id",
+			errorContains: "buildId",
 		},
 		{
-			name: "invalid build_id - overflow uint32",
+			name: "invalid buildId - overflow uint32",
 			setupSample: func() metrics.Sample {
 				metric := registry.MustNewMetric("http_reqs", metrics.Counter)
 				tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
-					"build_id": "9999999999999", // > max uint32
+					"buildId": "9999999999999", // > max uint32
 				})
 				return metrics.Sample{
 					TimeSeries: metrics.TimeSeries{
@@ -179,7 +176,7 @@ func TestConvertToCompatibleErrorScenarios(t *testing.T) {
 				}
 			},
 			expectError:   true,
-			errorContains: "build_id",
+			errorContains: "buildId",
 		},
 		{
 			name: "invalid status - non-numeric",
@@ -220,11 +217,11 @@ func TestConvertToCompatibleErrorScenarios(t *testing.T) {
 			errorContains: "status",
 		},
 		{
-			name: "negative build_id",
+			name: "negative buildId",
 			setupSample: func() metrics.Sample {
 				metric := registry.MustNewMetric("http_reqs", metrics.Counter)
 				tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
-					"build_id": "-123",
+					"buildId": "-123",
 				})
 				return metrics.Sample{
 					TimeSeries: metrics.TimeSeries{
@@ -236,7 +233,7 @@ func TestConvertToCompatibleErrorScenarios(t *testing.T) {
 				}
 			},
 			expectError:   true,
-			errorContains: "build_id",
+			errorContains: "buildId",
 		},
 		{
 			name: "negative status",
@@ -264,7 +261,7 @@ func TestConvertToCompatibleErrorScenarios(t *testing.T) {
 			t.Parallel()
 
 			sample := tt.setupSample()
-			result, err := ConvertToCompatible(ctx, sample)
+			result, err := convertToCompatible(sample)
 
 			if tt.expectError {
 				require.Error(t, err)
