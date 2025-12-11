@@ -49,14 +49,14 @@ func TestConcurrentAddMetricSamples(t *testing.T) {
 		wg.Add(numGoroutines)
 
 		// Launch concurrent goroutines that add metric samples
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(id int) {
 				defer wg.Done()
 
 				registry := metrics.NewRegistry()
 				metric := registry.MustNewMetric("concurrent_test", metrics.Counter)
 
-				for j := 0; j < samplesPerGoroutine; j++ {
+				for j := range samplesPerGoroutine {
 					sample := metrics.Sample{
 						TimeSeries: metrics.TimeSeries{
 							Metric: metric,
@@ -96,7 +96,7 @@ func TestConcurrentConvertToSimple(t *testing.T) {
 		// Track errors
 		errors := make(chan error, numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(id int) {
 				defer wg.Done()
 
@@ -117,7 +117,7 @@ func TestConcurrentConvertToSimple(t *testing.T) {
 				}
 
 				// Convert multiple times in the same goroutine
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					ss := convertToSimple(sample)
 					if ss.Metric != "http_reqs" {
 						errors <- assert.AnError
@@ -151,7 +151,7 @@ func TestConcurrentConvertToCompatible(t *testing.T) {
 
 		errors := make(chan error, numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(id int) {
 				defer wg.Done()
 
@@ -171,7 +171,7 @@ func TestConcurrentConvertToCompatible(t *testing.T) {
 					Value: float64(id),
 				}
 
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					cs, err := convertToCompatible(sample)
 					if err != nil {
 						errors <- err
@@ -205,7 +205,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			go func() {
 				defer wg.Done()
 
@@ -238,7 +238,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			go func() {
 				defer wg.Done()
 
@@ -268,7 +268,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			go func() {
 				defer wg.Done()
 
@@ -312,7 +312,7 @@ func TestStartStopLifecycleConcurrency(t *testing.T) {
 		wg.Add(numStops)
 
 		// Call Stop concurrently multiple times
-		for i := 0; i < numStops; i++ {
+		for range numStops {
 			go func() {
 				defer wg.Done()
 				err := clickhouseOut.Stop()
@@ -345,7 +345,7 @@ func TestStartStopLifecycleConcurrency(t *testing.T) {
 			registry := metrics.NewRegistry()
 			metric := registry.MustNewMetric("test", metrics.Counter)
 
-			for i := 0; i < 1000; i++ {
+			for i := range 1000 {
 				sample := metrics.Sample{
 					TimeSeries: metrics.TimeSeries{
 						Metric: metric,
@@ -381,7 +381,7 @@ func TestConcurrentClearMap(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			go func() {
 				defer wg.Done()
 
@@ -411,7 +411,7 @@ func TestGetAndDeleteConcurrency(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			go func() {
 				defer wg.Done()
 
@@ -443,7 +443,7 @@ func TestRaceConditions(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(id int) {
 				defer wg.Done()
 

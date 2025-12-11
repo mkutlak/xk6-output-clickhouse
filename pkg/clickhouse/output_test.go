@@ -672,7 +672,7 @@ func BenchmarkOutput_Description(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = out.Description()
 	}
 }
@@ -688,7 +688,7 @@ func BenchmarkOutput_New(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		out, err := New(params)
 		if err != nil {
 			b.Fatal(err)
