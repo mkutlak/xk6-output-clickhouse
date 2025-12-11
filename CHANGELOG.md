@@ -1,3 +1,18 @@
+## [0.2.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.1.0...v0.2.0) (2025-12-11)
+
+### Features
+
+* Go module updates and modernization ([066f523](https://github.com/mkutlak/xk6-output-clickhouse/commit/066f523534f881dfbe18b0da0fbda7d567c25755))
+* Update xk6 version and refactor release workflow ([3736c2e](https://github.com/mkutlak/xk6-output-clickhouse/commit/3736c2e3b2fe969e44ed931fce931414ec0cd828))
+
+### Code Refactoring
+
+* **clickhouse:** Restructure schema, conversions, and tests ([2d7c6ec](https://github.com/mkutlak/xk6-output-clickhouse/commit/2d7c6ecffe26674a7aed19dad93362916fee3782))
+
+### Documentation
+
+* add CONTRIBUTING.md guide ([9819714](https://github.com/mkutlak/xk6-output-clickhouse/commit/9819714e280b3efe06a40ddc97653a79f74c0625))
+
 ## [0.1.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.0.1...v0.1.0) (2025-12-10)
 
 ### Features
