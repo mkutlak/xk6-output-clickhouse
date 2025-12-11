@@ -29,7 +29,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid params with json config",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":         "clickhouse:9000",
 					"database":     "metrics",
 					"table":        "k6_samples",
@@ -56,7 +56,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "invalid pushInterval in json",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "not-a-duration",
 				}),
 			},
@@ -98,7 +98,7 @@ func TestNew_ConfigParsing(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr":         "test-host:9000",
 				"database":     "test_db",
 				"table":        "test_table",
@@ -290,7 +290,7 @@ func TestOutput_Lifecycle(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr":         "localhost:9000",
 				"pushInterval": "1s",
 			}),
@@ -639,7 +639,7 @@ func TestOutput_ConfigurationValidation(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr":         "test-host:9000",
 				"database":     "test_db",
 				"table":        "test_table",
@@ -679,7 +679,7 @@ func BenchmarkOutput_Description(b *testing.B) {
 
 func BenchmarkOutput_New(b *testing.B) {
 	params := output.Params{
-		JSONConfig: mustMarshalJSON(map[string]interface{}{
+		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr":         "localhost:9000",
 			"database":     "k6",
 			"table":        "samples",

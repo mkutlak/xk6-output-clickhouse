@@ -48,7 +48,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config overrides defaults",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":         "clickhouse.example.com:9000",
 					"database":     "metrics",
 					"table":        "k6_samples",
@@ -66,7 +66,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with partial overrides",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":     "192.168.1.100:9000",
 					"database": "custom_db",
 				}),
@@ -82,7 +82,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with only table",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"table": "metrics_table",
 				}),
 			},
@@ -97,7 +97,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with only pushInterval",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "10s",
 				}),
 			},
@@ -112,7 +112,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with milliseconds pushInterval",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "500ms",
 				}),
 			},
@@ -127,7 +127,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with minutes pushInterval",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "2m",
 				}),
 			},
@@ -150,7 +150,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "invalid pushInterval format",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "invalid",
 				}),
 			},
@@ -160,7 +160,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "invalid pushInterval type",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "not-a-duration",
 				}),
 			},
@@ -248,7 +248,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json and url config - url query params override json",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":         "json-host:9000",
 					"database":     "json_db",
 					"table":        "json_table",
@@ -280,7 +280,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with empty strings",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":         "",
 					"database":     "",
 					"table":        "",
@@ -311,7 +311,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with zero pushInterval",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "0s",
 				}),
 			},
@@ -321,7 +321,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with negative pushInterval",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "-5s",
 				}),
 			},
@@ -344,7 +344,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "json config with all fields set",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":         "production-clickhouse:9000",
 					"database":     "production",
 					"table":        "performance_metrics",
@@ -401,7 +401,7 @@ func TestParseConfig_EdgeCases(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr": "json-configured:9000",
 			}),
 			ConfigArgument: "://invalid-url",
@@ -458,7 +458,7 @@ func TestConfig_Struct(t *testing.T) {
 }
 
 // Helper function to marshal JSON for test cases
-func mustMarshalJSON(v interface{}) []byte {
+func mustMarshalJSON(v any) []byte {
 	data, err := json.Marshal(v)
 	if err != nil {
 		panic(err)
@@ -473,8 +473,8 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
-				"tls": map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
 					"enabled": true,
 				},
 			}),
@@ -493,8 +493,8 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 		certFile, keyFile := createTempClientCert(t)
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
-				"tls": map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
 					"enabled":            true,
 					"insecureSkipVerify": true,
 					"caFile":             caFile,
@@ -519,8 +519,8 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
-				"tls": map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
 					"enabled": false,
 				},
 			}),
@@ -535,8 +535,8 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
-				"tls": map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
 					"enabled":    true,
 					"serverName": "secure.clickhouse.local",
 				},
@@ -749,8 +749,8 @@ func TestParseConfig_TLS_Priority(t *testing.T) {
 		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "env.example.com")
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
-				"tls": map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
 					"enabled":    false,
 					"serverName": "json.example.com",
 				},
@@ -770,8 +770,8 @@ func TestParseConfig_TLS_Priority(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
-				"tls": map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
 					"enabled":    false,
 					"serverName": "json.example.com",
 				},

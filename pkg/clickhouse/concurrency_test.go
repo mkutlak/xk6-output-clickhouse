@@ -13,7 +13,7 @@ import (
 )
 
 // Helper function to create params for tests
-func mustCreateParams(t *testing.T, config map[string]interface{}) output.Params {
+func mustCreateParams(t *testing.T, config map[string]any) output.Params {
 	t.Helper()
 	data, err := json.Marshal(config)
 	require.NoError(t, err)
@@ -29,7 +29,7 @@ func TestConcurrentAddMetricSamples(t *testing.T) {
 	t.Run("concurrent AddMetricSamples calls", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]interface{}{
+		params := mustCreateParams(t, map[string]any{
 			"addr":     "localhost:9000",
 			"database": "k6",
 			"table":    "samples",
@@ -242,7 +242,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 			go func() {
 				defer wg.Done()
 
-				row := simpleRowPool.Get().([]interface{})
+				row := simpleRowPool.Get().([]any)
 				row[0] = time.Now()
 				row[1] = "metric"
 				row[2] = 123.45
@@ -255,7 +255,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 		wg.Wait()
 
 		// Verify pool still works
-		row := simpleRowPool.Get().([]interface{})
+		row := simpleRowPool.Get().([]any)
 		assert.NotNil(t, row)
 		assert.Equal(t, 4, len(row), "Row slice should have 4 elements")
 		simpleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
@@ -272,7 +272,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 			go func() {
 				defer wg.Done()
 
-				row := compatibleRowPool.Get().([]interface{})
+				row := compatibleRowPool.Get().([]any)
 				for i := range row {
 					row[i] = i
 				}
@@ -284,7 +284,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 		wg.Wait()
 
 		// Verify pool still works
-		row := compatibleRowPool.Get().([]interface{})
+		row := compatibleRowPool.Get().([]any)
 		assert.NotNil(t, row)
 		assert.Equal(t, 21, len(row), "Row slice should have 21 elements")
 		compatibleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
@@ -298,7 +298,7 @@ func TestStartStopLifecycleConcurrency(t *testing.T) {
 	t.Run("multiple Stop calls are safe", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]interface{}{
+		params := mustCreateParams(t, map[string]any{
 			"addr": "localhost:9000",
 		})
 
@@ -327,7 +327,7 @@ func TestStartStopLifecycleConcurrency(t *testing.T) {
 	t.Run("Stop is safe during AddMetricSamples", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]interface{}{
+		params := mustCreateParams(t, map[string]any{
 			"addr": "localhost:9000",
 		})
 

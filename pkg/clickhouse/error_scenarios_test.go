@@ -31,7 +31,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "invalid pushInterval format",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "not-a-duration",
 				}),
 			},
@@ -41,7 +41,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "negative pushInterval",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "-5s",
 				}),
 			},
@@ -51,7 +51,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "empty addr in JSON",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr": "",
 				}),
 			},
@@ -60,7 +60,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "invalid database name - SQL injection attempt",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"database": "test'; DROP DATABASE test; --",
 				}),
 			},
@@ -70,7 +70,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "invalid table name - SQL injection attempt",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"table": "samples'; DROP TABLE samples; --",
 				}),
 			},
@@ -80,7 +80,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "database name too long",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"database": string(make([]byte, 100)), // > 63 chars
 				}),
 			},
@@ -90,7 +90,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "table name too long",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"table": string(make([]byte, 100)), // > 63 chars
 				}),
 			},
@@ -100,7 +100,7 @@ func TestNewErrorScenarios(t *testing.T) {
 		{
 			name: "invalid schema mode",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"schemaMode": "invalid",
 				}),
 			},
@@ -284,7 +284,7 @@ func TestStartErrorScenarios(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr": "invalid-host-that-does-not-exist:9999",
 			}),
 		}
@@ -306,7 +306,7 @@ func TestStartErrorScenarios(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr": "localhost:9000",
 			}),
 		}
@@ -443,7 +443,7 @@ func TestConfigErrorScenarios(t *testing.T) {
 		{
 			name:      "conflicting config sources",
 			configArg: "localhost:9000?database=db1",
-			jsonConfig: mustMarshalJSON(map[string]interface{}{
+			jsonConfig: mustMarshalJSON(map[string]any{
 				"database": "db2",
 			}),
 			expectError: false, // JSON takes precedence
@@ -483,9 +483,9 @@ func TestTLSConfigErrorScenarios(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr": "localhost:9440",
-				"tls": map[string]interface{}{
+				"tls": map[string]any{
 					"enabled": true,
 					"caFile":  "/nonexistent/ca.crt",
 				},
@@ -504,9 +504,9 @@ func TestTLSConfigErrorScenarios(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr": "localhost:9440",
-				"tls": map[string]interface{}{
+				"tls": map[string]any{
 					"enabled":  true,
 					"certFile": "/nonexistent/client.crt",
 					"keyFile":  "/nonexistent/client.key",
@@ -526,9 +526,9 @@ func TestTLSConfigErrorScenarios(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]interface{}{
+			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr": "localhost:9440",
-				"tls": map[string]interface{}{
+				"tls": map[string]any{
 					"enabled":  true,
 					"certFile": "/some/cert.crt",
 					// Missing keyFile
@@ -560,15 +560,15 @@ func TestMemoryPoolErrorScenarios(t *testing.T) {
 
 		// simpleRowPool
 		row := simpleRowPool.Get()
-		slice, ok := row.([]interface{})
-		assert.True(t, ok, "simpleRowPool should return []interface{}")
+		slice, ok := row.([]any)
+		assert.True(t, ok, "simpleRowPool should return []any")
 		assert.Equal(t, 4, len(slice), "simpleRowPool should return slice of length 4")
 		simpleRowPool.Put(row)
 
 		// compatibleRowPool
 		row = compatibleRowPool.Get()
-		slice, ok = row.([]interface{})
-		assert.True(t, ok, "compatibleRowPool should return []interface{}")
+		slice, ok = row.([]any)
+		assert.True(t, ok, "compatibleRowPool should return []any")
 		assert.Equal(t, 21, len(slice), "compatibleRowPool should return slice of length 21")
 		compatibleRowPool.Put(row)
 	})
@@ -628,7 +628,7 @@ func TestEdgeCaseIdentifiers(t *testing.T) {
 			t.Parallel()
 
 			params := output.Params{
-				JSONConfig: mustMarshalJSON(map[string]interface{}{
+				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":     "localhost:9000",
 					"database": tt.database,
 					"table":    tt.table,

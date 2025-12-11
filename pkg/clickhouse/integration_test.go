@@ -23,7 +23,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	CreateDatabase(t, endpoint, dbName)
 
 	params := output.Params{
-		JSONConfig: mustMarshalJSON(map[string]interface{}{
+		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr":         endpoint,
 			"user":         testUsername,
 			"password":     testPassword,
