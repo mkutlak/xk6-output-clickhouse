@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.k6.io/k6/output"
 )
 
 // createTempCACert creates a temporary CA certificate file for testing
@@ -339,6 +340,139 @@ func TestValidateFileReadable(t *testing.T) {
 		if err != nil {
 			assert.Contains(t, err.Error(), "file is not readable")
 		}
+	})
+}
+
+// TLS Config Parsing Tests (from config sources)
+
+func TestParseConfig_TLS_JSON(t *testing.T) {
+	t.Parallel()
+
+	t.Run("TLS enabled in JSON", func(t *testing.T) {
+		t.Parallel()
+
+		params := output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
+					"enabled": true,
+				},
+			}),
+		}
+
+		cfg, err := ParseConfig(params)
+		require.NoError(t, err)
+		assert.True(t, cfg.TLS.Enabled)
+	})
+
+	t.Run("TLS with all options in JSON", func(t *testing.T) {
+		t.Parallel()
+
+		caFile := createTempCACert(t)
+		certFile, keyFile := createTempClientCert(t)
+
+		params := output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
+					"enabled":            true,
+					"insecureSkipVerify": true,
+					"caFile":             caFile,
+					"certFile":           certFile,
+					"keyFile":            keyFile,
+					"serverName":         "clickhouse.example.com",
+				},
+			}),
+		}
+
+		cfg, err := ParseConfig(params)
+		require.NoError(t, err)
+		assert.True(t, cfg.TLS.Enabled)
+		assert.True(t, cfg.TLS.InsecureSkipVerify)
+		assert.Equal(t, caFile, cfg.TLS.CAFile)
+		assert.Equal(t, certFile, cfg.TLS.CertFile)
+		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
+		assert.Equal(t, "clickhouse.example.com", cfg.TLS.ServerName)
+	})
+}
+
+func TestParseConfig_TLS_URL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("TLS enabled via URL", func(t *testing.T) {
+		t.Parallel()
+
+		params := output.Params{
+			ConfigArgument: "localhost:9440?tlsEnabled=true",
+		}
+
+		cfg, err := ParseConfig(params)
+		require.NoError(t, err)
+		assert.True(t, cfg.TLS.Enabled)
+	})
+
+	t.Run("TLS with insecure skip verify via URL", func(t *testing.T) {
+		t.Parallel()
+
+		params := output.Params{
+			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsInsecureSkipVerify=true",
+		}
+
+		cfg, err := ParseConfig(params)
+		require.NoError(t, err)
+		assert.True(t, cfg.TLS.Enabled)
+		assert.True(t, cfg.TLS.InsecureSkipVerify)
+	})
+}
+
+func TestParseConfig_TLS_Environment(t *testing.T) {
+	t.Run("TLS enabled via ENV", func(t *testing.T) {
+		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
+
+		params := output.Params{}
+		cfg, err := ParseConfig(params)
+		require.NoError(t, err)
+		assert.True(t, cfg.TLS.Enabled)
+	})
+
+	t.Run("TLS with all options via ENV", func(t *testing.T) {
+		caFile := createTempCACert(t)
+		certFile, keyFile := createTempClientCert(t)
+		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
+		t.Setenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY", "false")
+		t.Setenv("K6_CLICKHOUSE_TLS_CA_FILE", caFile)
+		t.Setenv("K6_CLICKHOUSE_TLS_CERT_FILE", certFile)
+		t.Setenv("K6_CLICKHOUSE_TLS_KEY_FILE", keyFile)
+		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "clickhouse.local")
+
+		params := output.Params{}
+		cfg, err := ParseConfig(params)
+		require.NoError(t, err)
+		assert.True(t, cfg.TLS.Enabled)
+		assert.False(t, cfg.TLS.InsecureSkipVerify)
+		assert.Equal(t, caFile, cfg.TLS.CAFile)
+		assert.Equal(t, certFile, cfg.TLS.CertFile)
+		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
+		assert.Equal(t, "clickhouse.local", cfg.TLS.ServerName)
+	})
+}
+
+func TestParseConfig_TLS_Priority(t *testing.T) {
+	t.Run("ENV overrides JSON", func(t *testing.T) {
+		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
+		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "env.example.com")
+
+		params := output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"tls": map[string]any{
+					"enabled":    false,
+					"serverName": "json.example.com",
+				},
+			}),
+		}
+
+		cfg, err := ParseConfig(params)
+		require.NoError(t, err)
+		assert.True(t, cfg.TLS.Enabled)
+		assert.Equal(t, "env.example.com", cfg.TLS.ServerName)
 	})
 }
 

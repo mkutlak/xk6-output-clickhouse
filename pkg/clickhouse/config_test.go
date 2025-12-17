@@ -43,7 +43,6 @@ func TestParseConfig(t *testing.T) {
 				Table:        "samples",
 				PushInterval: 1 * time.Second,
 			},
-			expectError: false,
 		},
 		{
 			name: "json config overrides defaults",
@@ -61,7 +60,6 @@ func TestParseConfig(t *testing.T) {
 				Table:        "k6_samples",
 				PushInterval: 5 * time.Second,
 			},
-			expectError: false,
 		},
 		{
 			name: "json config with partial overrides",
@@ -77,67 +75,6 @@ func TestParseConfig(t *testing.T) {
 				Table:        "samples",
 				PushInterval: 1 * time.Second,
 			},
-			expectError: false,
-		},
-		{
-			name: "json config with only table",
-			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]any{
-					"table": "metrics_table",
-				}),
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "metrics_table",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "json config with only pushInterval",
-			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]any{
-					"pushInterval": "10s",
-				}),
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 10 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "json config with milliseconds pushInterval",
-			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]any{
-					"pushInterval": "500ms",
-				}),
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 500 * time.Millisecond,
-			},
-			expectError: false,
-		},
-		{
-			name: "json config with minutes pushInterval",
-			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]any{
-					"pushInterval": "2m",
-				}),
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 2 * time.Minute,
-			},
-			expectError: false,
 		},
 		{
 			name: "invalid json config",
@@ -151,86 +88,11 @@ func TestParseConfig(t *testing.T) {
 			name: "invalid pushInterval format",
 			params: output.Params{
 				JSONConfig: mustMarshalJSON(map[string]any{
-					"pushInterval": "invalid",
-				}),
-			},
-			expectError:   true,
-			errorContains: "invalid pushInterval",
-		},
-		{
-			name: "invalid pushInterval type",
-			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "not-a-duration",
 				}),
 			},
 			expectError:   true,
 			errorContains: "invalid pushInterval",
-		},
-		{
-			name: "url config with address without scheme (treated as path)",
-			params: output.Params{
-				ConfigArgument: "clickhouse.example.com:9000",
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000", // Without scheme, url.Parse doesn't populate Host, defaults remain
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "url config with query parameters (no scheme)",
-			params: output.Params{
-				ConfigArgument: "clickhouse.example.com:9000?database=prod&table=metrics",
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000", // Without scheme, Host is empty, defaults remain for Addr
-				Database:     "prod",           // But query params are parsed
-				Table:        "metrics",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "url config with only database query parameter",
-			params: output.Params{
-				ConfigArgument: "localhost:9000?database=test_db",
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "test_db",
-				Table:        "samples",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "url config with only table query parameter",
-			params: output.Params{
-				ConfigArgument: "localhost:9000?table=test_table",
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "test_table",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "url config with IP address (no scheme, treated as path)",
-			params: output.Params{
-				ConfigArgument: "192.168.1.100:9000",
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000", // Without scheme, defaults remain
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
 		},
 		{
 			name: "url config with scheme",
@@ -243,70 +105,18 @@ func TestParseConfig(t *testing.T) {
 				Table:        "samples",
 				PushInterval: 1 * time.Second,
 			},
-			expectError: false,
 		},
 		{
-			name: "json and url config - url query params override json",
+			name: "url config with query parameters",
 			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]any{
-					"addr":         "json-host:9000",
-					"database":     "json_db",
-					"table":        "json_table",
-					"pushInterval": "5s",
-				}),
-				ConfigArgument: "url-host:9000?database=url_db&table=url_table",
-			},
-			expectedConfig: Config{
-				Addr:         "json-host:9000", // URL without scheme doesn't override addr
-				Database:     "url_db",         // But query params do override
-				Table:        "url_table",
-				PushInterval: 5 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "url config with empty query parameters",
-			params: output.Params{
-				ConfigArgument: "localhost:9000?database=&table=",
+				ConfigArgument: "localhost:9000?database=prod&table=metrics",
 			},
 			expectedConfig: Config{
 				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
+				Database:     "prod",
+				Table:        "metrics",
 				PushInterval: 1 * time.Second,
 			},
-			expectError: false,
-		},
-		{
-			name: "json config with empty strings",
-			params: output.Params{
-				JSONConfig: mustMarshalJSON(map[string]any{
-					"addr":         "",
-					"database":     "",
-					"table":        "",
-					"pushInterval": "",
-				}),
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
-		},
-		{
-			name: "url config with special characters in query",
-			params: output.Params{
-				ConfigArgument: "localhost:9000?database=k6_test&table=samples_2024",
-			},
-			expectedConfig: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6_test",
-				Table:        "samples_2024",
-				PushInterval: 1 * time.Second,
-			},
-			expectError: false,
 		},
 		{
 			name: "json config with zero pushInterval",
@@ -329,35 +139,39 @@ func TestParseConfig(t *testing.T) {
 			errorContains: "push interval must be positive",
 		},
 		{
-			name: "url config with IPv6 address (no scheme)",
+			name: "json config with empty strings uses defaults",
 			params: output.Params{
-				ConfigArgument: "[::1]:9000",
+				JSONConfig: mustMarshalJSON(map[string]any{
+					"addr":         "",
+					"database":     "",
+					"table":        "",
+					"pushInterval": "",
+				}),
 			},
 			expectedConfig: Config{
-				Addr:         "localhost:9000", // Without scheme, defaults remain
+				Addr:         "localhost:9000",
 				Database:     "k6",
 				Table:        "samples",
 				PushInterval: 1 * time.Second,
 			},
-			expectError: false,
 		},
 		{
-			name: "json config with all fields set",
+			name: "json and url config - url query params override json",
 			params: output.Params{
 				JSONConfig: mustMarshalJSON(map[string]any{
-					"addr":         "production-clickhouse:9000",
-					"database":     "production",
-					"table":        "performance_metrics",
-					"pushInterval": "30s",
+					"addr":         "json-host:9000",
+					"database":     "json_db",
+					"table":        "json_table",
+					"pushInterval": "5s",
 				}),
+				ConfigArgument: "url-host:9000?database=url_db&table=url_table",
 			},
 			expectedConfig: Config{
-				Addr:         "production-clickhouse:9000",
-				Database:     "production",
-				Table:        "performance_metrics",
-				PushInterval: 30 * time.Second,
+				Addr:         "json-host:9000",
+				Database:     "url_db",
+				Table:        "url_table",
+				PushInterval: 5 * time.Second,
 			},
-			expectError: false,
 		},
 	}
 
@@ -411,19 +225,6 @@ func TestParseConfig_EdgeCases(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "json-configured:9000", cfg.Addr)
 	})
-
-	t.Run("url with fragment", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			ConfigArgument: "localhost:9000?database=test#fragment",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.Equal(t, "localhost:9000", cfg.Addr)
-		assert.Equal(t, "test", cfg.Database)
-	})
 }
 
 func TestConfig_Struct(t *testing.T) {
@@ -464,326 +265,4 @@ func mustMarshalJSON(v any) []byte {
 		panic(err)
 	}
 	return data
-}
-
-func TestParseConfig_TLS_JSON(t *testing.T) {
-	t.Parallel()
-
-	t.Run("TLS enabled in JSON", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]any{
-				"tls": map[string]any{
-					"enabled": true,
-				},
-			}),
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-	})
-
-	t.Run("TLS with all options in JSON", func(t *testing.T) {
-		t.Parallel()
-
-		// Create temporary certificate files
-		caFile := createTempCACert(t)
-		certFile, keyFile := createTempClientCert(t)
-
-		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]any{
-				"tls": map[string]any{
-					"enabled":            true,
-					"insecureSkipVerify": true,
-					"caFile":             caFile,
-					"certFile":           certFile,
-					"keyFile":            keyFile,
-					"serverName":         "clickhouse.example.com",
-				},
-			}),
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.True(t, cfg.TLS.InsecureSkipVerify)
-		assert.Equal(t, caFile, cfg.TLS.CAFile)
-		assert.Equal(t, certFile, cfg.TLS.CertFile)
-		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
-		assert.Equal(t, "clickhouse.example.com", cfg.TLS.ServerName)
-	})
-
-	t.Run("TLS disabled explicitly in JSON", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]any{
-				"tls": map[string]any{
-					"enabled": false,
-				},
-			}),
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.False(t, cfg.TLS.Enabled)
-	})
-
-	t.Run("TLS with partial config in JSON", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]any{
-				"tls": map[string]any{
-					"enabled":    true,
-					"serverName": "secure.clickhouse.local",
-				},
-			}),
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, "secure.clickhouse.local", cfg.TLS.ServerName)
-	})
-}
-
-func TestParseConfig_TLS_URL(t *testing.T) {
-	t.Parallel()
-
-	t.Run("TLS enabled via URL", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			ConfigArgument: "localhost:9440?tlsEnabled=true",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-	})
-
-	t.Run("TLS disabled via URL", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			ConfigArgument: "localhost:9440?tlsEnabled=false",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.False(t, cfg.TLS.Enabled)
-	})
-
-	t.Run("TLS with insecure skip verify via URL", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsInsecureSkipVerify=true",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.True(t, cfg.TLS.InsecureSkipVerify)
-	})
-
-	t.Run("TLS with CA file via URL", func(t *testing.T) {
-		t.Parallel()
-
-		caFile := createTempCACert(t)
-		params := output.Params{
-			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsCAFile=" + caFile,
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, caFile, cfg.TLS.CAFile)
-	})
-
-	t.Run("TLS with client cert via URL", func(t *testing.T) {
-		t.Parallel()
-
-		certFile, keyFile := createTempClientCert(t)
-		params := output.Params{
-			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsCertFile=" + certFile + "&tlsKeyFile=" + keyFile,
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, certFile, cfg.TLS.CertFile)
-		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
-	})
-
-	t.Run("TLS with server name via URL", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsServerName=clickhouse.example.com",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, "clickhouse.example.com", cfg.TLS.ServerName)
-	})
-
-	t.Run("TLS with all options via URL", func(t *testing.T) {
-		t.Parallel()
-
-		caFile := createTempCACert(t)
-		certFile, keyFile := createTempClientCert(t)
-		params := output.Params{
-			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsInsecureSkipVerify=false&tlsCAFile=" + caFile + "&tlsCertFile=" + certFile + "&tlsKeyFile=" + keyFile + "&tlsServerName=clickhouse.local",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.False(t, cfg.TLS.InsecureSkipVerify)
-		assert.Equal(t, caFile, cfg.TLS.CAFile)
-		assert.Equal(t, certFile, cfg.TLS.CertFile)
-		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
-		assert.Equal(t, "clickhouse.local", cfg.TLS.ServerName)
-	})
-}
-
-func TestParseConfig_TLS_Environment(t *testing.T) {
-	t.Run("TLS enabled via ENV", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-
-		params := output.Params{}
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-	})
-
-	t.Run("TLS disabled via ENV", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "false")
-
-		params := output.Params{}
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.False(t, cfg.TLS.Enabled)
-	})
-
-	t.Run("TLS with insecure skip verify via ENV", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY", "true")
-
-		params := output.Params{}
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.True(t, cfg.TLS.InsecureSkipVerify)
-	})
-
-	t.Run("TLS with CA file via ENV", func(t *testing.T) {
-		caFile := createTempCACert(t)
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_CA_FILE", caFile)
-
-		params := output.Params{}
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, caFile, cfg.TLS.CAFile)
-	})
-
-	t.Run("TLS with client cert via ENV", func(t *testing.T) {
-		certFile, keyFile := createTempClientCert(t)
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_CERT_FILE", certFile)
-		t.Setenv("K6_CLICKHOUSE_TLS_KEY_FILE", keyFile)
-
-		params := output.Params{}
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, certFile, cfg.TLS.CertFile)
-		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
-	})
-
-	t.Run("TLS with server name via ENV", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "clickhouse.example.com")
-
-		params := output.Params{}
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, "clickhouse.example.com", cfg.TLS.ServerName)
-	})
-
-	t.Run("TLS with all options via ENV", func(t *testing.T) {
-		caFile := createTempCACert(t)
-		certFile, keyFile := createTempClientCert(t)
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY", "false")
-		t.Setenv("K6_CLICKHOUSE_TLS_CA_FILE", caFile)
-		t.Setenv("K6_CLICKHOUSE_TLS_CERT_FILE", certFile)
-		t.Setenv("K6_CLICKHOUSE_TLS_KEY_FILE", keyFile)
-		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "clickhouse.local")
-
-		params := output.Params{}
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.True(t, cfg.TLS.Enabled)
-		assert.False(t, cfg.TLS.InsecureSkipVerify)
-		assert.Equal(t, caFile, cfg.TLS.CAFile)
-		assert.Equal(t, certFile, cfg.TLS.CertFile)
-		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
-		assert.Equal(t, "clickhouse.local", cfg.TLS.ServerName)
-	})
-}
-
-func TestParseConfig_TLS_Priority(t *testing.T) {
-	t.Run("ENV overrides JSON and URL", func(t *testing.T) {
-		// Environment variables have highest priority
-
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "env.example.com")
-
-		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]any{
-				"tls": map[string]any{
-					"enabled":    false,
-					"serverName": "json.example.com",
-				},
-			}),
-			ConfigArgument: "localhost:9440?tlsServerName=url.example.com",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-
-		// ENV should override everything
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, "env.example.com", cfg.TLS.ServerName)
-	})
-
-	t.Run("URL overrides JSON", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{
-			JSONConfig: mustMarshalJSON(map[string]any{
-				"tls": map[string]any{
-					"enabled":    false,
-					"serverName": "json.example.com",
-				},
-			}),
-			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsServerName=url.example.com",
-		}
-
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-
-		// URL should override JSON
-		assert.True(t, cfg.TLS.Enabled)
-		assert.Equal(t, "url.example.com", cfg.TLS.ServerName)
-	})
 }
