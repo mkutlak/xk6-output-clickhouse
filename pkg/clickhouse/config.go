@@ -61,6 +61,12 @@ type TLSConfig struct {
 //   - PushInterval: 1s
 //   - SchemaMode: "simple"
 //   - SkipSchemaCreation: false
+//   - RetryAttempts: 3
+//   - RetryDelay: 100ms
+//   - RetryMaxDelay: 5s
+//   - BufferEnabled: true
+//   - BufferMaxSamples: 10000
+//   - BufferDropPolicy: "oldest"
 //
 // Configuration sources (in priority order):
 //  1. Environment variables (K6_CLICKHOUSE_*)
@@ -102,6 +108,42 @@ type Config struct {
 
 	// TLS holds TLS/SSL configuration
 	TLS TLSConfig
+
+	// Retry settings for handling transient connection failures
+
+	// RetryAttempts is the maximum number of retry attempts per flush operation.
+	// Set to 0 for no retries (fail immediately). Default: 3
+	// Env: K6_CLICKHOUSE_RETRY_ATTEMPTS
+	RetryAttempts uint
+
+	// RetryDelay is the initial delay between retry attempts.
+	// Uses exponential backoff: delay * 2^attempt. Default: 100ms
+	// Env: K6_CLICKHOUSE_RETRY_DELAY
+	RetryDelay time.Duration
+
+	// RetryMaxDelay is the maximum delay cap for exponential backoff. Default: 5s
+	// Env: K6_CLICKHOUSE_RETRY_MAX_DELAY
+	RetryMaxDelay time.Duration
+
+	// Buffer settings for handling extended outages
+
+	// BufferEnabled enables in-memory buffering of samples during connection failures.
+	// When true, failed samples are queued and retried on next successful connection.
+	// Default: true
+	// Env: K6_CLICKHOUSE_BUFFER_ENABLED
+	BufferEnabled bool
+
+	// BufferMaxSamples is the maximum number of sample containers to buffer.
+	// When exceeded, samples are dropped according to BufferDropPolicy.
+	// Default: 10000
+	// Env: K6_CLICKHOUSE_BUFFER_MAX_SAMPLES
+	BufferMaxSamples int
+
+	// BufferDropPolicy determines which samples to drop when buffer overflows.
+	// Valid values: "oldest" (drop oldest, preserve recent) or "newest" (drop incoming).
+	// Default: "oldest"
+	// Env: K6_CLICKHOUSE_BUFFER_DROP_POLICY
+	BufferDropPolicy string
 }
 
 // validateFileReadable checks if a file exists and is readable
@@ -196,6 +238,25 @@ func (c Config) Validate() error {
 		}
 	}
 
+	// Validate retry configuration
+	if c.RetryDelay < 0 {
+		return fmt.Errorf("retry delay must be non-negative, got %v", c.RetryDelay)
+	}
+	if c.RetryMaxDelay < 0 {
+		return fmt.Errorf("retry max delay must be non-negative, got %v", c.RetryMaxDelay)
+	}
+	if c.RetryMaxDelay > 0 && c.RetryDelay > c.RetryMaxDelay {
+		return fmt.Errorf("retry delay (%v) cannot exceed max delay (%v)", c.RetryDelay, c.RetryMaxDelay)
+	}
+
+	// Validate buffer configuration
+	if c.BufferEnabled && c.BufferMaxSamples <= 0 {
+		return fmt.Errorf("buffer max samples must be positive when buffering is enabled, got %d", c.BufferMaxSamples)
+	}
+	if c.BufferDropPolicy != "" && c.BufferDropPolicy != "oldest" && c.BufferDropPolicy != "newest" {
+		return fmt.Errorf("invalid buffer drop policy: %s (valid: oldest, newest)", c.BufferDropPolicy)
+	}
+
 	return nil
 }
 
@@ -218,6 +279,14 @@ func NewConfig() Config {
 			KeyFile:            "",
 			ServerName:         "",
 		},
+		// Retry defaults: 3 attempts with exponential backoff (100ms, 200ms, 400ms...)
+		RetryAttempts: 3,
+		RetryDelay:    100 * time.Millisecond,
+		RetryMaxDelay: 5 * time.Second,
+		// Buffer defaults: enabled with 10K sample capacity, drop oldest on overflow
+		BufferEnabled:    true,
+		BufferMaxSamples: 10000,
+		BufferDropPolicy: "oldest",
 	}
 }
 
@@ -246,6 +315,14 @@ func ParseConfig(params output.Params) (Config, error) {
 				KeyFile            string `json:"keyFile"`
 				ServerName         string `json:"serverName"`
 			} `json:"tls"`
+			// Retry configuration
+			RetryAttempts uint   `json:"retryAttempts"`
+			RetryDelay    string `json:"retryDelay"`
+			RetryMaxDelay string `json:"retryMaxDelay"`
+			// Buffer configuration
+			BufferEnabled    *bool  `json:"bufferEnabled"` // Pointer to distinguish unset from false
+			BufferMaxSamples int    `json:"bufferMaxSamples"`
+			BufferDropPolicy string `json:"bufferDropPolicy"`
 		}{}
 
 		if err := json.Unmarshal(params.JSONConfig, &jsonConf); err != nil {
@@ -296,6 +373,34 @@ func ParseConfig(params output.Params) (Config, error) {
 			if jsonConf.TLS.ServerName != "" {
 				cfg.TLS.ServerName = jsonConf.TLS.ServerName
 			}
+		}
+		// Parse retry config
+		if jsonConf.RetryAttempts > 0 {
+			cfg.RetryAttempts = jsonConf.RetryAttempts
+		}
+		if jsonConf.RetryDelay != "" {
+			d, err := time.ParseDuration(jsonConf.RetryDelay)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid retryDelay: %w", err)
+			}
+			cfg.RetryDelay = d
+		}
+		if jsonConf.RetryMaxDelay != "" {
+			d, err := time.ParseDuration(jsonConf.RetryMaxDelay)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid retryMaxDelay: %w", err)
+			}
+			cfg.RetryMaxDelay = d
+		}
+		// Parse buffer config
+		if jsonConf.BufferEnabled != nil {
+			cfg.BufferEnabled = *jsonConf.BufferEnabled
+		}
+		if jsonConf.BufferMaxSamples > 0 {
+			cfg.BufferMaxSamples = jsonConf.BufferMaxSamples
+		}
+		if jsonConf.BufferDropPolicy != "" {
+			cfg.BufferDropPolicy = jsonConf.BufferDropPolicy
 		}
 	}
 
@@ -400,6 +505,38 @@ func ParseConfig(params output.Params) (Config, error) {
 	}
 	if tlsServerName := os.Getenv("K6_CLICKHOUSE_TLS_SERVER_NAME"); tlsServerName != "" {
 		cfg.TLS.ServerName = tlsServerName
+	}
+
+	// Parse retry environment variables
+	if retryAttempts := os.Getenv("K6_CLICKHOUSE_RETRY_ATTEMPTS"); retryAttempts != "" {
+		if v, err := strconv.ParseUint(retryAttempts, 10, 32); err == nil {
+			cfg.RetryAttempts = uint(v)
+		}
+	}
+	if retryDelay := os.Getenv("K6_CLICKHOUSE_RETRY_DELAY"); retryDelay != "" {
+		if d, err := time.ParseDuration(retryDelay); err == nil {
+			cfg.RetryDelay = d
+		}
+	}
+	if retryMaxDelay := os.Getenv("K6_CLICKHOUSE_RETRY_MAX_DELAY"); retryMaxDelay != "" {
+		if d, err := time.ParseDuration(retryMaxDelay); err == nil {
+			cfg.RetryMaxDelay = d
+		}
+	}
+
+	// Parse buffer environment variables
+	if bufferEnabled := os.Getenv("K6_CLICKHOUSE_BUFFER_ENABLED"); bufferEnabled != "" {
+		if enabled, err := strconv.ParseBool(bufferEnabled); err == nil {
+			cfg.BufferEnabled = enabled
+		}
+	}
+	if bufferMaxSamples := os.Getenv("K6_CLICKHOUSE_BUFFER_MAX_SAMPLES"); bufferMaxSamples != "" {
+		if v, err := strconv.Atoi(bufferMaxSamples); err == nil {
+			cfg.BufferMaxSamples = v
+		}
+	}
+	if bufferDropPolicy := os.Getenv("K6_CLICKHOUSE_BUFFER_DROP_POLICY"); bufferDropPolicy != "" {
+		cfg.BufferDropPolicy = bufferDropPolicy
 	}
 
 	// Validate configuration

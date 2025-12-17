@@ -54,6 +54,80 @@ Or via command line:
 | `schemaMode` | `K6_CLICKHOUSE_SCHEMA_MODE` | `simple` | Schema mode: `simple` (recommended) or `compatible` (legacy) |
 | `skipSchemaCreation` | `K6_CLICKHOUSE_SKIP_SCHEMA_CREATION` | `false` | Set to `true` to skip DB/Table creation |
 
+### Connection Resilience
+
+The extension includes built-in retry logic and buffering to handle transient ClickHouse connection failures during test runs.
+
+#### Retry Configuration
+
+| Option | Environment Variable | Default | Description |
+|--------|----------------------|---------|-------------|
+| `retryAttempts` | `K6_CLICKHOUSE_RETRY_ATTEMPTS` | `3` | Max retry attempts per flush (0 to disable) |
+| `retryDelay` | `K6_CLICKHOUSE_RETRY_DELAY` | `100ms` | Initial delay between retries |
+| `retryMaxDelay` | `K6_CLICKHOUSE_RETRY_MAX_DELAY` | `5s` | Maximum delay cap for exponential backoff |
+
+#### Buffer Configuration
+
+| Option | Environment Variable | Default | Description |
+|--------|----------------------|---------|-------------|
+| `bufferEnabled` | `K6_CLICKHOUSE_BUFFER_ENABLED` | `true` | Enable in-memory buffering during outages |
+| `bufferMaxSamples` | `K6_CLICKHOUSE_BUFFER_MAX_SAMPLES` | `10000` | Maximum sample containers to buffer |
+| `bufferDropPolicy` | `K6_CLICKHOUSE_BUFFER_DROP_POLICY` | `oldest` | Overflow policy: `oldest` or `newest` |
+
+#### How It Works
+
+When ClickHouse becomes unavailable during a test:
+
+1. **Retry with backoff**: Failed flushes are retried with exponential backoff (100ms → 200ms → 400ms, capped at 5s)
+2. **Buffer on failure**: After exhausting retries, samples are buffered in memory
+3. **Automatic recovery**: On the next flush cycle, buffered samples are replayed along with new samples
+4. **Graceful shutdown**: On test completion, the extension attempts to drain any remaining buffered data
+
+#### Configuration Examples
+
+```javascript
+// In script options
+export const options = {
+    ext: {
+        clickhouse: {
+            addr: "localhost:9000",
+            database: "k6",
+            // Retry settings
+            retryAttempts: 5,
+            retryDelay: "200ms",
+            retryMaxDelay: "10s",
+            // Buffer settings
+            bufferEnabled: true,
+            bufferMaxSamples: 50000,
+            bufferDropPolicy: "oldest"
+        }
+    }
+};
+```
+
+```bash
+# Via environment variables
+export K6_CLICKHOUSE_RETRY_ATTEMPTS=5
+export K6_CLICKHOUSE_RETRY_DELAY=200ms
+export K6_CLICKHOUSE_BUFFER_MAX_SAMPLES=50000
+./k6 run --out clickhouse=localhost:9000 script.js
+```
+
+#### Overflow Policies
+
+- **`oldest`** (default): Drops oldest samples when buffer is full. Preserves the most recent test data.
+- **`newest`**: Rejects new samples when buffer is full. Preserves data from the start of the outage.
+
+#### Disabling Resilience Features
+
+```bash
+# Disable retries (fail immediately)
+K6_CLICKHOUSE_RETRY_ATTEMPTS=0 ./k6 run --out clickhouse script.js
+
+# Disable buffering (data lost on connection failure)
+K6_CLICKHOUSE_BUFFER_ENABLED=false ./k6 run --out clickhouse script.js
+```
+
 ### TLS/SSL Configuration
 
 Secure your connection to ClickHouse using TLS. The extension supports system CA pool, custom CA certificates, and mutual TLS (mTLS) with client certificates.

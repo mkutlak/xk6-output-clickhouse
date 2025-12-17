@@ -3,13 +3,17 @@ package clickhouse
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/avast/retry-go/v4"
+	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -77,10 +81,18 @@ type Output struct {
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 
+	// Resilience: in-memory buffer for samples during connection failures
+	failoverBuffer *SampleBuffer
+
 	// Error metrics (atomic for lock-free concurrent access)
 	convertErrors    atomic.Uint64 // Cumulative count of sample conversion failures
 	insertErrors     atomic.Uint64 // Cumulative count of database insert failures
 	samplesProcessed atomic.Uint64 // Cumulative count of successfully inserted samples
+
+	// Resilience metrics (atomic for lock-free concurrent access)
+	retryAttempts  atomic.Uint64 // Total retry attempts across all flushes
+	flushFailures  atomic.Uint64 // Flushes that failed after all retries
+	droppedSamples atomic.Uint64 // Samples dropped due to buffer overflow
 }
 
 // ErrorMetrics contains cumulative error statistics from flush operations.
@@ -96,6 +108,22 @@ type ErrorMetrics struct {
 
 	// SamplesProcessed is the total number of samples successfully inserted.
 	SamplesProcessed uint64
+
+	// RetryAttempts is the total number of retry attempts across all flushes.
+	// High values indicate frequent transient connection issues.
+	RetryAttempts uint64
+
+	// FlushFailures is the count of flushes that failed after exhausting all retries.
+	// These failures result in samples being buffered (if enabled) or lost.
+	FlushFailures uint64
+
+	// BufferedSamples is the current number of samples in the failover buffer.
+	// Only populated when BufferEnabled is true.
+	BufferedSamples uint64
+
+	// DroppedSamples is the total number of samples dropped due to buffer overflow.
+	// Only relevant when BufferEnabled is true.
+	DroppedSamples uint64
 }
 
 // New creates a new ClickHouse output
@@ -160,11 +188,12 @@ func (o *Output) Start() error {
 		o.logger.Debug("TLS disabled, using unencrypted connection")
 	}
 
-	// Connect to ClickHouse
+	// Connect to ClickHouse without specifying database in auth.
+	// This allows CREATE DATABASE IF NOT EXISTS to work when the target database doesn't exist.
+	// All queries use fully-qualified table names ({database}.{table}), so no default database is needed.
 	db := clickhouse.OpenDB(&clickhouse.Options{
 		Addr: []string{o.config.Addr},
 		Auth: clickhouse.Auth{
-			Database: o.config.Database,
 			Username: o.config.User,
 			Password: o.config.Password,
 		},
@@ -201,6 +230,17 @@ func (o *Output) Start() error {
 	// Pre-compute INSERT query from schema implementation
 	o.insertQuery = o.schema.InsertQuery(o.config.Database, o.config.Table)
 
+	// Initialize failover buffer if enabled
+	if o.config.BufferEnabled {
+		o.failoverBuffer = NewSampleBuffer(
+			o.config.BufferMaxSamples,
+			DropPolicy(o.config.BufferDropPolicy),
+		)
+		o.logger.Debug("Failover buffer initialized",
+			zap.Int("capacity", o.config.BufferMaxSamples),
+			zap.String("dropPolicy", o.config.BufferDropPolicy))
+	}
+
 	// Start periodic flusher
 	pf, err := output.NewPeriodicFlusher(o.config.PushInterval, o.flush)
 	if err != nil {
@@ -208,7 +248,11 @@ func (o *Output) Start() error {
 	}
 	o.periodicFlusher = pf
 
-	o.logger.Debug("Started", zap.Duration("interval", o.config.PushInterval))
+	o.logger.Debug("Started",
+		zap.Duration("interval", o.config.PushInterval),
+		zap.Uint("retryAttempts", o.config.RetryAttempts),
+		zap.Duration("retryDelay", o.config.RetryDelay),
+		zap.Bool("bufferEnabled", o.config.BufferEnabled))
 	return nil
 }
 
@@ -224,21 +268,43 @@ func (o *Output) Stop() error {
 
 	o.logger.Debug("Stopping")
 
-	// Cancel all flushes to enable graceful shutdown
-	if o.shutdownCancel != nil {
-		o.shutdownCancel()
-	}
-
-	// Stop scheduling new flushes
+	// Stop scheduling new flushes first (before cancelling context)
 	if o.periodicFlusher != nil {
 		o.periodicFlusher.Stop()
 	}
 
 	// Wait for all in-flight flushes to complete
-	// This prevents closing the database while flushes are using it
 	o.logger.Debug("Waiting for in-flight flushes to complete")
 	o.flushWG.Wait()
 	o.logger.Debug("All flushes completed")
+
+	// Final attempt to drain failover buffer before shutdown
+	if o.failoverBuffer != nil && o.failoverBuffer.Len() > 0 {
+		bufferedCount := o.failoverBuffer.Len()
+		o.logger.Info("Draining failover buffer on shutdown",
+			zap.Int("bufferedSamples", bufferedCount))
+
+		// Use a fresh context for final drain (don't use cancelled shutdown context)
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer drainCancel()
+
+		samples := o.failoverBuffer.PopAll()
+		if len(samples) > 0 {
+			if err := o.doFlush(drainCtx, samples); err != nil {
+				o.logger.Warn("Failed to drain buffer on shutdown, data may be lost",
+					zap.Int("lostSamples", len(samples)),
+					zap.Error(err))
+			} else {
+				o.logger.Info("Successfully drained failover buffer",
+					zap.Int("flushedSamples", len(samples)))
+			}
+		}
+	}
+
+	// Cancel shutdown context after final drain
+	if o.shutdownCancel != nil {
+		o.shutdownCancel()
+	}
 
 	// Now safe to close database
 	o.mu.Lock()
@@ -248,21 +314,74 @@ func (o *Output) Stop() error {
 		_ = o.db.Close()
 	}
 
-	o.logger.Debug("Stopped")
+	// Log final metrics
+	metrics := o.GetErrorMetrics()
+	o.logger.Info("ClickHouse output stopped",
+		zap.Uint64("samplesProcessed", metrics.SamplesProcessed),
+		zap.Uint64("convertErrors", metrics.ConvertErrors),
+		zap.Uint64("insertErrors", metrics.InsertErrors),
+		zap.Uint64("retryAttempts", metrics.RetryAttempts),
+		zap.Uint64("flushFailures", metrics.FlushFailures),
+		zap.Uint64("droppedSamples", metrics.DroppedSamples))
+
 	return nil
 }
 
 // GetErrorMetrics returns cumulative error statistics from flush operations.
 // All counters are thread-safe and can be called concurrently with flush operations.
 func (o *Output) GetErrorMetrics() ErrorMetrics {
+	var bufferedSamples uint64
+	if o.failoverBuffer != nil {
+		bufferedSamples = uint64(o.failoverBuffer.Len())
+	}
+
 	return ErrorMetrics{
 		ConvertErrors:    o.convertErrors.Load(),
 		InsertErrors:     o.insertErrors.Load(),
 		SamplesProcessed: o.samplesProcessed.Load(),
+		RetryAttempts:    o.retryAttempts.Load(),
+		FlushFailures:    o.flushFailures.Load(),
+		BufferedSamples:  bufferedSamples,
+		DroppedSamples:   o.droppedSamples.Load(),
 	}
 }
 
-// flush writes buffered samples to ClickHouse
+// isRetryableError checks if an error is transient and worth retrying.
+// Connection errors, timeouts, and temporary network issues are retryable.
+// Conversion errors and data validation errors are not.
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for network errors (connection refused, timeout, etc.)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	// Check for common ClickHouse connection error patterns
+	errMsg := strings.ToLower(err.Error())
+	retryablePatterns := []string{
+		"connection refused",
+		"connection reset",
+		"i/o timeout",
+		"no such host",
+		"network is unreachable",
+		"broken pipe",
+		"eof",
+	}
+
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errMsg, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// flush writes buffered samples to ClickHouse with retry logic
 //
 //nolint:gocyclo // complexity is acceptable for batch processing with error handling
 func (o *Output) flush() {
@@ -274,22 +393,20 @@ func (o *Output) flush() {
 	}
 
 	// Register active flush while still under lock (prevents race with Stop())
-	// This is critical: Add(1) must happen while holding RLock to prevent
-	// Stop() from closing the database between the closed check and Add(1)
 	o.flushWG.Add(1)
 
 	// Capture state under lock
-	db := o.db
-	insertQuery := o.insertQuery
-	converter := o.converter
-	logger := o.logger
 	ctx := o.shutdownCtx
+	logger := o.logger
+	retryAttempts := o.config.RetryAttempts
+	retryDelay := o.config.RetryDelay
+	retryMaxDelay := o.config.RetryMaxDelay
+	bufferEnabled := o.config.BufferEnabled
 	o.mu.RUnlock()
 
-	// Ensure Done() is called even on early return
 	defer o.flushWG.Done()
 
-	// Check if context was cancelled during shutdown (if context is set)
+	// Check if context was cancelled during shutdown
 	if ctx != nil {
 		select {
 		case <-ctx.Done():
@@ -299,25 +416,99 @@ func (o *Output) flush() {
 		}
 	}
 
+	// Collect samples from both k6 buffer and failover buffer
 	samples := o.GetBufferedSamples()
+
+	// Also get any previously failed samples from failover buffer
+	if o.failoverBuffer != nil {
+		bufferedSamples := o.failoverBuffer.PopAll()
+		if len(bufferedSamples) > 0 {
+			logger.Debug("Recovered samples from failover buffer",
+				zap.Int("count", len(bufferedSamples)))
+			samples = append(bufferedSamples, samples...)
+		}
+	}
+
 	if len(samples) == 0 {
 		return
 	}
 
 	start := time.Now()
 
-	// Prepare batch insert
+	// Wrap flush in retry logic
+	err := retry.Do(
+		func() error {
+			return o.doFlush(ctx, samples)
+		},
+		retry.Attempts(retryAttempts+1), // +1 because Attempts includes the initial attempt
+		retry.Delay(retryDelay),
+		retry.MaxDelay(retryMaxDelay),
+		retry.DelayType(retry.BackOffDelay),
+		retry.Context(ctx),
+		retry.OnRetry(func(n uint, err error) {
+			o.retryAttempts.Add(1)
+			logger.Warn("Flush failed, retrying",
+				zap.Uint("attempt", n+1),
+				zap.Uint("maxAttempts", retryAttempts),
+				zap.Error(err))
+		}),
+		retry.RetryIf(isRetryableError),
+	)
+
+	if err != nil {
+		o.flushFailures.Add(1)
+		logger.Error("Flush failed after retries",
+			zap.Error(err),
+			zap.Duration("elapsed", time.Since(start)))
+
+		// Buffer failed samples for later retry
+		if bufferEnabled && o.failoverBuffer != nil {
+			dropped := o.failoverBuffer.Push(samples)
+			if dropped > 0 {
+				o.droppedSamples.Add(uint64(dropped))
+				logger.Warn("Buffer overflow, dropped samples",
+					zap.Int("dropped", dropped),
+					zap.Int("buffered", o.failoverBuffer.Len()))
+			} else {
+				logger.Info("Samples buffered for retry",
+					zap.Int("count", len(samples)),
+					zap.Int("bufferSize", o.failoverBuffer.Len()))
+			}
+		} else {
+			logger.Error("Samples lost (buffering disabled)",
+				zap.Int("lostSamples", len(samples)))
+		}
+	}
+}
+
+// doFlush performs the actual database insertion for a batch of samples.
+// This is the core flush logic, separated to enable retry wrapping.
+//
+//nolint:gocyclo // complexity is acceptable for batch processing
+func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer) error {
+	o.mu.RLock()
+	db := o.db
+	insertQuery := o.insertQuery
+	converter := o.converter
+	logger := o.logger
+	o.mu.RUnlock()
+
+	if db == nil {
+		return errors.New("database connection not initialized")
+	}
+
+	start := time.Now()
+
+	// Begin transaction
 	batch, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		logger.Error("Failed to begin batch", zap.Error(err))
-		return
+		return fmt.Errorf("failed to begin batch: %w", err)
 	}
 	defer func() { _ = batch.Rollback() }()
 
 	stmt, err := batch.PrepareContext(ctx, insertQuery)
 	if err != nil {
-		logger.Error("Failed to prepare statement", zap.Error(err))
-		return
+		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	defer func() { _ = stmt.Close() }()
 
@@ -335,17 +526,11 @@ func (o *Output) flush() {
 	for _, container := range samples {
 		for _, sample := range container.GetSamples() {
 			// Check for context cancellation every 1000 samples
-			// Use non-blocking select for optimal performance
 			if ctx != nil && count%1000 == 0 {
 				select {
 				case <-ctx.Done():
-					logger.Warn("Flush cancelled by context",
-						zap.Int("processed", count),
-						zap.Int("total", totalSamples),
-						zap.Error(ctx.Err()))
-					return
+					return ctx.Err()
 				default:
-					// Continue processing
 				}
 			}
 
@@ -360,7 +545,7 @@ func (o *Output) flush() {
 			// Execute insert
 			_, execErr := stmt.ExecContext(ctx, row...)
 
-			// Release pooled resources (row buffer and tag maps)
+			// Release pooled resources
 			converter.Release(row)
 
 			if execErr != nil {
@@ -373,8 +558,7 @@ func (o *Output) flush() {
 	}
 
 	if err := batch.Commit(); err != nil {
-		logger.Error("Failed to commit batch", zap.Error(err))
-		return
+		return fmt.Errorf("failed to commit batch: %w", err)
 	}
 
 	// Update cumulative atomic counters
@@ -386,7 +570,7 @@ func (o *Output) flush() {
 	}
 	o.samplesProcessed.Add(uint64(count))
 
-	// Log summary if any errors occurred during this flush
+	// Log summary
 	if flushConvertErrors > 0 || flushInsertErrors > 0 {
 		logger.Warn("Flush completed with errors",
 			zap.Uint64("convertErrors", flushConvertErrors),
@@ -399,4 +583,6 @@ func (o *Output) flush() {
 			zap.Int("samples", count),
 			zap.Duration("elapsed", time.Since(start)))
 	}
+
+	return nil
 }
