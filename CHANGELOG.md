@@ -1,3 +1,10 @@
+## [0.3.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.2.0...v0.3.0) (2025-12-23)
+
+### Features
+
+* Add connection resilience with retry and buffering ([83e949b](https://github.com/mkutlak/xk6-output-clickhouse/commit/83e949b056ff6ad96df3eaf3724fc54cadf0ef2d))
+* Add error metrics and atomic counters to output ([6538b5e](https://github.com/mkutlak/xk6-output-clickhouse/commit/6538b5e2fa39f42a9179829f644772d71c0004e8))
+
 ## [0.2.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.1.0...v0.2.0) (2025-12-11)
 
 ### Features
