@@ -424,10 +424,10 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for range 100 {
-					metrics := clickhouseOut.GetErrorMetrics()
-					_ = metrics.ConvertErrors
-					_ = metrics.InsertErrors
-					_ = metrics.SamplesProcessed
+					errStats := clickhouseOut.GetErrorMetrics()
+					_ = errStats.ConvertErrors
+					_ = errStats.InsertErrors
+					_ = errStats.SamplesProcessed
 				}
 			}()
 		}
@@ -483,10 +483,10 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 
 		wg.Wait()
 
-		metrics := clickhouseOut.GetErrorMetrics()
-		assert.Equal(t, expectedTotal, metrics.ConvertErrors)
-		assert.Equal(t, expectedTotal, metrics.InsertErrors)
-		assert.Equal(t, expectedTotal, metrics.SamplesProcessed)
+		errStats := clickhouseOut.GetErrorMetrics()
+		assert.Equal(t, expectedTotal, errStats.ConvertErrors)
+		assert.Equal(t, expectedTotal, errStats.InsertErrors)
+		assert.Equal(t, expectedTotal, errStats.SamplesProcessed)
 	})
 
 	t.Run("concurrent reads and writes", func(t *testing.T) {
@@ -523,10 +523,10 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for range iterations {
-					metrics := clickhouseOut.GetErrorMetrics()
-					assert.GreaterOrEqual(t, metrics.ConvertErrors, uint64(0))
-					assert.GreaterOrEqual(t, metrics.InsertErrors, uint64(0))
-					assert.GreaterOrEqual(t, metrics.SamplesProcessed, uint64(0))
+					errStats := clickhouseOut.GetErrorMetrics()
+					assert.GreaterOrEqual(t, errStats.ConvertErrors, uint64(0))
+					assert.GreaterOrEqual(t, errStats.InsertErrors, uint64(0))
+					assert.GreaterOrEqual(t, errStats.SamplesProcessed, uint64(0))
 				}
 			}()
 		}
@@ -534,10 +534,10 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 		wg.Wait()
 
 		expectedTotal := uint64(numWriters * iterations)
-		metrics := clickhouseOut.GetErrorMetrics()
-		assert.Equal(t, expectedTotal, metrics.ConvertErrors)
-		assert.Equal(t, expectedTotal, metrics.InsertErrors)
-		assert.Equal(t, expectedTotal, metrics.SamplesProcessed)
+		errStats := clickhouseOut.GetErrorMetrics()
+		assert.Equal(t, expectedTotal, errStats.ConvertErrors)
+		assert.Equal(t, expectedTotal, errStats.InsertErrors)
+		assert.Equal(t, expectedTotal, errStats.SamplesProcessed)
 	})
 }
 
@@ -601,8 +601,8 @@ func BenchmarkGetErrorMetrics(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			metrics := clickhouseOut.GetErrorMetrics()
-			_ = metrics
+			errStats := clickhouseOut.GetErrorMetrics()
+			_ = errStats
 		}
 	})
 }

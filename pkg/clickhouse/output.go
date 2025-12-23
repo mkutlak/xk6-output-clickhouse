@@ -315,14 +315,14 @@ func (o *Output) Stop() error {
 	}
 
 	// Log final metrics
-	metrics := o.GetErrorMetrics()
+	errStats := o.GetErrorMetrics()
 	o.logger.Info("ClickHouse output stopped",
-		zap.Uint64("samplesProcessed", metrics.SamplesProcessed),
-		zap.Uint64("convertErrors", metrics.ConvertErrors),
-		zap.Uint64("insertErrors", metrics.InsertErrors),
-		zap.Uint64("retryAttempts", metrics.RetryAttempts),
-		zap.Uint64("flushFailures", metrics.FlushFailures),
-		zap.Uint64("droppedSamples", metrics.DroppedSamples))
+		zap.Uint64("samplesProcessed", errStats.SamplesProcessed),
+		zap.Uint64("convertErrors", errStats.ConvertErrors),
+		zap.Uint64("insertErrors", errStats.InsertErrors),
+		zap.Uint64("retryAttempts", errStats.RetryAttempts),
+		zap.Uint64("flushFailures", errStats.FlushFailures),
+		zap.Uint64("droppedSamples", errStats.DroppedSamples))
 
 	return nil
 }
@@ -382,8 +382,6 @@ func isRetryableError(err error) bool {
 }
 
 // flush writes buffered samples to ClickHouse with retry logic
-//
-//nolint:gocyclo // complexity is acceptable for batch processing with error handling
 func (o *Output) flush() {
 	// Quick early exit check (before acquiring WaitGroup)
 	o.mu.RLock()
