@@ -182,6 +182,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("clickhouse address is required")
 	}
 
+	if c.User == "" {
+		return fmt.Errorf("clickhouse user is required")
+	}
+
 	if c.Database == "" {
 		return fmt.Errorf("clickhouse database name is required")
 	}
@@ -430,8 +434,8 @@ func ParseConfig(params output.Params) (Config, error) {
 			if schemaMode := q.Get("schemaMode"); schemaMode != "" {
 				cfg.SchemaMode = schemaMode
 			}
-			if skipSchema := q.Get("skipSchemaCreation"); skipSchema == "true" {
-				cfg.SkipSchemaCreation = true
+			if skipSchema := q.Get("skipSchemaCreation"); skipSchema != "" {
+				cfg.SkipSchemaCreation = skipSchema == "true"
 			}
 
 			// Parse TLS URL parameters
@@ -479,8 +483,8 @@ func ParseConfig(params output.Params) (Config, error) {
 	if schemaMode := os.Getenv("K6_CLICKHOUSE_SCHEMA_MODE"); schemaMode != "" {
 		cfg.SchemaMode = schemaMode
 	}
-	if skipSchema := os.Getenv("K6_CLICKHOUSE_SKIP_SCHEMA_CREATION"); skipSchema == "true" {
-		cfg.SkipSchemaCreation = true
+	if skipSchema := os.Getenv("K6_CLICKHOUSE_SKIP_SCHEMA_CREATION"); skipSchema != "" {
+		cfg.SkipSchemaCreation = skipSchema == "true"
 	}
 
 	// Parse TLS environment variables

@@ -502,13 +502,21 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 	if err != nil {
 		return fmt.Errorf("failed to begin batch: %w", err)
 	}
-	defer func() { _ = batch.Rollback() }()
+	defer func() {
+		if rollbackErr := batch.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+		}
+	}()
 
 	stmt, err := batch.PrepareContext(ctx, insertQuery)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
-	defer func() { _ = stmt.Close() }()
+	defer func() {
+		if closeErr := stmt.Close(); closeErr != nil {
+			logger.Warn("failed to close statement", zap.Error(closeErr))
+		}
+	}()
 
 	count := 0
 	totalSamples := 0
