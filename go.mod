@@ -7,7 +7,7 @@ require (
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.40.0
-	go.k6.io/k6 v1.4.2
+	go.k6.io/k6 v1.5.0
 	go.uber.org/zap v1.27.1
 )
 
