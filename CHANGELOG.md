@@ -1,3 +1,9 @@
+## [0.5.2](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.1...v0.5.2) (2026-02-06)
+
+### Bug Fixes
+
+* **clickhouse:** improve configuration, error handling, and reliability ([5f2f4ff](https://github.com/mkutlak/xk6-output-clickhouse/commit/5f2f4ff7f31b5855f4b268cb55b164ea5fcd4d43))
+
 ## [0.5.1](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.0...v0.5.1) (2026-02-06)
 
 ### Bug Fixes
