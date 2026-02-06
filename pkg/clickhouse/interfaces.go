@@ -32,7 +32,7 @@ type SampleConverter interface {
 	Convert(ctx context.Context, sample metrics.Sample) ([]any, error)
 
 	// Release returns pooled resources (e.g., maps, slices) after insertion.
-	// Called after ExecContext completes to enable memory reuse.
+	// Called after batch Commit completes to enable memory reuse.
 	Release(row []any)
 }
 

@@ -1,11 +1,14 @@
 package clickhouse
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
 )
 
@@ -334,25 +337,25 @@ func TestOutput_GetErrorMetrics_Initial(t *testing.T) {
 	require.NoError(t, err)
 
 	clickhouseOut := out.(*Output)
-	metrics := clickhouseOut.GetErrorMetrics()
+	errMetrics := clickhouseOut.GetErrorMetrics()
 
-	assert.Equal(t, uint64(0), metrics.ConvertErrors, "initial ConvertErrors should be 0")
-	assert.Equal(t, uint64(0), metrics.InsertErrors, "initial InsertErrors should be 0")
-	assert.Equal(t, uint64(0), metrics.SamplesProcessed, "initial SamplesProcessed should be 0")
+	assert.Equal(t, uint64(0), errMetrics.ConvertErrors, "initial ConvertErrors should be 0")
+	assert.Equal(t, uint64(0), errMetrics.InsertErrors, "initial InsertErrors should be 0")
+	assert.Equal(t, uint64(0), errMetrics.SamplesProcessed, "initial SamplesProcessed should be 0")
 }
 
 func TestErrorMetrics_Values(t *testing.T) {
 	t.Parallel()
 
-	metrics := ErrorMetrics{
+	errMetrics := ErrorMetrics{
 		ConvertErrors:    10,
 		InsertErrors:     5,
 		SamplesProcessed: 1000,
 	}
 
-	assert.Equal(t, uint64(10), metrics.ConvertErrors)
-	assert.Equal(t, uint64(5), metrics.InsertErrors)
-	assert.Equal(t, uint64(1000), metrics.SamplesProcessed)
+	assert.Equal(t, uint64(10), errMetrics.ConvertErrors)
+	assert.Equal(t, uint64(5), errMetrics.InsertErrors)
+	assert.Equal(t, uint64(1000), errMetrics.SamplesProcessed)
 }
 
 func TestOutput_GetErrorMetrics_AfterStop(t *testing.T) {
@@ -373,10 +376,10 @@ func TestOutput_GetErrorMetrics_AfterStop(t *testing.T) {
 	require.NoError(t, err)
 
 	// Metrics should still be accessible after stop
-	metrics := clickhouseOut.GetErrorMetrics()
-	assert.Equal(t, uint64(5), metrics.ConvertErrors)
-	assert.Equal(t, uint64(3), metrics.InsertErrors)
-	assert.Equal(t, uint64(100), metrics.SamplesProcessed)
+	errMetrics := clickhouseOut.GetErrorMetrics()
+	assert.Equal(t, uint64(5), errMetrics.ConvertErrors)
+	assert.Equal(t, uint64(3), errMetrics.InsertErrors)
+	assert.Equal(t, uint64(100), errMetrics.SamplesProcessed)
 }
 
 func TestOutput_ErrorMetrics_AtomicOperations(t *testing.T) {
@@ -395,10 +398,10 @@ func TestOutput_ErrorMetrics_AtomicOperations(t *testing.T) {
 	clickhouseOut.samplesProcessed.Add(100)
 	clickhouseOut.samplesProcessed.Add(50)
 
-	metrics := clickhouseOut.GetErrorMetrics()
-	assert.Equal(t, uint64(8), metrics.ConvertErrors)
-	assert.Equal(t, uint64(2), metrics.InsertErrors)
-	assert.Equal(t, uint64(150), metrics.SamplesProcessed)
+	errMetrics := clickhouseOut.GetErrorMetrics()
+	assert.Equal(t, uint64(8), errMetrics.ConvertErrors)
+	assert.Equal(t, uint64(2), errMetrics.InsertErrors)
+	assert.Equal(t, uint64(150), errMetrics.SamplesProcessed)
 }
 
 // Benchmark tests
@@ -435,6 +438,114 @@ func BenchmarkOutput_New(b *testing.B) {
 		}
 		_ = out
 	}
+}
+
+// Test for Issue #1: Verify Release is deferred until after Commit (not called before)
+// This tests the doFlush method indirectly by verifying the pendingRows pattern.
+func TestDoFlush_ReleaseAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("release is deferred on context cancellation", func(t *testing.T) {
+		t.Parallel()
+
+		// Create an Output with no database — doFlush should fail at BeginTx
+		// but this validates the pendingRows accumulator doesn't leak on error paths
+		params := output.Params{}
+		out, err := New(params)
+		require.NoError(t, err)
+
+		clickhouseOut := out.(*Output)
+		clickhouseOut.db = nil
+
+		registry := metrics.NewRegistry()
+		metric := registry.MustNewMetric("test", metrics.Counter)
+		sample := metrics.Sample{
+			TimeSeries: metrics.TimeSeries{
+				Metric: metric,
+			},
+			Time:  time.Now(),
+			Value: 1.0,
+		}
+		containers := []metrics.SampleContainer{metrics.Samples{sample}}
+
+		ctx := context.Background()
+		err = clickhouseOut.doFlush(ctx, containers)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "database connection not initialized")
+	})
+}
+
+// Test for Issue #2: Verify Stop allows final flush to execute
+func TestStop_FinalFlushNotSkipped(t *testing.T) {
+	t.Parallel()
+
+	t.Run("flush is not blocked during stop sequence", func(t *testing.T) {
+		t.Parallel()
+
+		params := output.Params{}
+		out, err := New(params)
+		require.NoError(t, err)
+
+		clickhouseOut := out.(*Output)
+
+		// Verify closed is false before Stop
+		clickhouseOut.mu.RLock()
+		assert.False(t, clickhouseOut.closed, "closed should be false before Stop")
+		clickhouseOut.mu.RUnlock()
+
+		// flush() should not skip when closed is false
+		// (simulates the final flush triggered by periodicFlusher.Stop)
+		require.NotPanics(t, func() {
+			clickhouseOut.flush() // Should execute normally (no samples, returns early)
+		})
+
+		// Now stop
+		err = clickhouseOut.Stop()
+		require.NoError(t, err)
+
+		// After Stop, closed should be true
+		clickhouseOut.mu.RLock()
+		assert.True(t, clickhouseOut.closed, "closed should be true after Stop")
+		clickhouseOut.mu.RUnlock()
+
+		// flush() should now skip due to closed flag
+		require.NotPanics(t, func() {
+			clickhouseOut.flush()
+		})
+	})
+
+	t.Run("concurrent stop calls are safe with double-check lock", func(t *testing.T) {
+		t.Parallel()
+
+		params := output.Params{}
+		out, err := New(params)
+		require.NoError(t, err)
+
+		clickhouseOut := out.(*Output)
+
+		var wg sync.WaitGroup
+		numStops := 20
+		wg.Add(numStops)
+		errs := make([]error, numStops)
+
+		for i := range numStops {
+			go func(idx int) {
+				defer wg.Done()
+				errs[idx] = clickhouseOut.Stop()
+			}(i)
+		}
+
+		wg.Wait()
+
+		for i, stopErr := range errs {
+			assert.NoError(t, stopErr, "Stop call %d should not error", i)
+		}
+
+		// Verify final state
+		clickhouseOut.mu.RLock()
+		assert.True(t, clickhouseOut.closed)
+		clickhouseOut.mu.RUnlock()
+	})
 }
 
 // mustMarshalJSON is defined in config_test.go

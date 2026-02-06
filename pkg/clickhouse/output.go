@@ -258,22 +258,35 @@ func (o *Output) Start() error {
 
 // Stop flushes remaining metrics and closes the connection
 func (o *Output) Stop() error {
+	// Check if already stopped (read-only check to avoid blocking)
+	o.mu.RLock()
+	alreadyClosed := o.closed
+	pf := o.periodicFlusher
+	o.mu.RUnlock()
+
+	if alreadyClosed {
+		return nil
+	}
+
+	o.logger.Debug("Stopping")
+
+	// Stop the periodic flusher FIRST — this triggers one final flush callback.
+	// Since o.closed is still false, the final flush() executes normally.
+	if pf != nil {
+		pf.Stop()
+	}
+
+	// Now mark as closed to prevent any new flushes from starting.
 	o.mu.Lock()
 	if o.closed {
+		// Another goroutine completed Stop() concurrently
 		o.mu.Unlock()
-		return nil // Already stopped
+		return nil
 	}
 	o.closed = true
 	o.mu.Unlock()
 
-	o.logger.Debug("Stopping")
-
-	// Stop scheduling new flushes first (before cancelling context)
-	if o.periodicFlusher != nil {
-		o.periodicFlusher.Stop()
-	}
-
-	// Wait for all in-flight flushes to complete
+	// Wait for all in-flight flushes to complete (including the final one)
 	o.logger.Debug("Waiting for in-flight flushes to complete")
 	o.flushWG.Wait()
 	o.logger.Debug("All flushes completed")
@@ -529,6 +542,16 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 		totalSamples += len(container.GetSamples())
 	}
 
+	// Accumulate rows that were successfully passed to ExecContext.
+	// These must NOT be released back to sync.Pool until after batch.Commit(),
+	// because the ClickHouse driver holds references to row data internally.
+	pendingRows := make([][]any, 0, totalSamples)
+	defer func() {
+		for _, row := range pendingRows {
+			converter.Release(row)
+		}
+	}()
+
 	for _, container := range samples {
 		for _, sample := range container.GetSamples() {
 			// Check for context cancellation every 1000 samples
@@ -550,15 +573,13 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 
 			// Execute insert
 			_, execErr := stmt.ExecContext(ctx, row...)
-
-			// Release pooled resources
-			converter.Release(row)
-
 			if execErr != nil {
+				converter.Release(row) // Driver discards failed rows, safe to release
 				flushInsertErrors++
 				logger.Error("Failed to insert sample", zap.Error(execErr))
 				continue
 			}
+			pendingRows = append(pendingRows, row)
 			count++
 		}
 	}
