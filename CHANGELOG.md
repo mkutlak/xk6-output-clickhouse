@@ -1,3 +1,9 @@
+## [0.5.1](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.0...v0.5.1) (2026-02-06)
+
+### Bug Fixes
+
+* **clickhouse:** robust shutdown and safe resource release ([fe4d9ec](https://github.com/mkutlak/xk6-output-clickhouse/commit/fe4d9ec9ba8c7dd708fe6e5677eca7193e380658))
+
 ## [0.4.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.3.0...v0.4.0) (2025-12-23)
 
 ### Features
