@@ -2,6 +2,10 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -546,6 +550,142 @@ func TestStop_FinalFlushNotSkipped(t *testing.T) {
 		assert.True(t, clickhouseOut.closed)
 		clickhouseOut.mu.RUnlock()
 	})
+}
+
+// Test for Issue #4: isRetryableError uses typed EOF checks instead of broad "eof" pattern
+func TestIsRetryableError_EOFPatternFix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "io.EOF",
+			err:      io.EOF,
+			expected: true,
+		},
+		{
+			name:     "io.ErrUnexpectedEOF",
+			err:      io.ErrUnexpectedEOF,
+			expected: true,
+		},
+		{
+			name:     "wrapped io.EOF",
+			err:      fmt.Errorf("read failed: %w", io.EOF),
+			expected: true,
+		},
+		{
+			name:     "wrapped io.ErrUnexpectedEOF",
+			err:      fmt.Errorf("read failed: %w", io.ErrUnexpectedEOF),
+			expected: true,
+		},
+		{
+			name:     "thereof should not match",
+			err:      errors.New("the value thereof is invalid"),
+			expected: false,
+		},
+		{
+			name:     "whereof should not match",
+			err:      errors.New("the source whereof is unknown"),
+			expected: false,
+		},
+		{
+			name:     "connection refused",
+			err:      errors.New("dial tcp 127.0.0.1:9000: connection refused"),
+			expected: true,
+		},
+		{
+			name:     "data validation error not retryable",
+			err:      errors.New("invalid data type for column"),
+			expected: false,
+		},
+		{
+			name:     "network error",
+			err:      &net.OpError{Op: "dial", Err: errors.New("connection refused")},
+			expected: true,
+		},
+		{
+			name:     "broken pipe",
+			err:      errors.New("write: broken pipe"),
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := isRetryableError(tt.err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// Test for Issue #7: commitError is not retryable
+func TestIsRetryableError_CommitError(t *testing.T) {
+	t.Parallel()
+
+	t.Run("commitError is not retryable", func(t *testing.T) {
+		t.Parallel()
+		ce := &commitError{err: errors.New("connection lost during commit")}
+		assert.False(t, isRetryableError(ce))
+	})
+
+	t.Run("wrapped commitError is not retryable", func(t *testing.T) {
+		t.Parallel()
+		ce := &commitError{err: io.EOF}
+		wrapped := fmt.Errorf("flush failed: %w", ce)
+		assert.False(t, isRetryableError(wrapped))
+	})
+
+	t.Run("commitError Unwrap returns inner error", func(t *testing.T) {
+		t.Parallel()
+		inner := errors.New("timeout")
+		ce := &commitError{err: inner}
+		assert.Equal(t, inner, errors.Unwrap(ce))
+	})
+
+	t.Run("commitError Error message", func(t *testing.T) {
+		t.Parallel()
+		ce := &commitError{err: errors.New("some db error")}
+		assert.Contains(t, ce.Error(), "commit error: some db error")
+	})
+}
+
+// Test for Issue #8: overlapping flushes are prevented
+func TestFlush_OverlappingPrevented(t *testing.T) {
+	t.Parallel()
+
+	params := output.Params{}
+	out, err := New(params)
+	require.NoError(t, err)
+
+	clickhouseOut := out.(*Output)
+
+	// Hold the flush mutex to simulate a long-running flush
+	clickhouseOut.flushMu.Lock()
+
+	// flush() should return immediately without blocking
+	done := make(chan struct{})
+	go func() {
+		clickhouseOut.flush()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good — flush returned immediately
+	case <-time.After(1 * time.Second):
+		t.Fatal("flush() blocked when flushMu was held — overlapping flush prevention failed")
+	}
+
+	clickhouseOut.flushMu.Unlock()
 }
 
 // mustMarshalJSON is defined in config_test.go

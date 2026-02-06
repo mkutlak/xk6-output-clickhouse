@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -54,6 +55,14 @@ func clearMap(m map[string]string) {
 	}
 }
 
+// commitError wraps errors that occur during batch.Commit().
+// Commit errors are ambiguous: the server may have persisted the data before the
+// response was lost. To avoid duplication, these errors are NOT retried.
+type commitError struct{ err error }
+
+func (e *commitError) Error() string { return "commit error: " + e.err.Error() }
+func (e *commitError) Unwrap() error { return e.err }
+
 // escapeIdentifier escapes a ClickHouse identifier with backticks
 func escapeIdentifier(name string) string {
 	return "`" + name + "`"
@@ -76,6 +85,7 @@ type Output struct {
 	mu      sync.RWMutex
 	closed  bool
 	flushWG sync.WaitGroup // Track in-flight flushes
+	flushMu sync.Mutex     // Prevents overlapping flush cycles during outages
 
 	// Context cancellation for graceful shutdown
 	shutdownCtx    context.Context
@@ -367,6 +377,17 @@ func isRetryableError(err error) bool {
 		return false
 	}
 
+	// Commit errors are never retryable — the server may have already persisted data
+	var ce *commitError
+	if errors.As(err, &ce) {
+		return false
+	}
+
+	// Check for EOF errors using typed checks (avoids matching "thereof", "whereof", etc.)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+
 	// Check for network errors (connection refused, timeout, etc.)
 	var netErr net.Error
 	if errors.As(err, &netErr) {
@@ -382,7 +403,6 @@ func isRetryableError(err error) bool {
 		"no such host",
 		"network is unreachable",
 		"broken pipe",
-		"eof",
 	}
 
 	for _, pattern := range retryablePatterns {
@@ -396,6 +416,14 @@ func isRetryableError(err error) bool {
 
 // flush writes buffered samples to ClickHouse with retry logic
 func (o *Output) flush() {
+	// Prevent overlapping flushes — if a previous flush is still running
+	// (e.g., retrying during an outage), skip this cycle to avoid amplifying
+	// load on an already-struggling ClickHouse.
+	if !o.flushMu.TryLock() {
+		return
+	}
+	defer o.flushMu.Unlock()
+
 	// Quick early exit check (before acquiring WaitGroup)
 	o.mu.RLock()
 	if o.closed {
@@ -472,6 +500,16 @@ func (o *Output) flush() {
 			zap.Error(err),
 			zap.Duration("elapsed", time.Since(start)))
 
+		// Commit errors are ambiguous — data may already be persisted.
+		// Do NOT buffer these samples to avoid duplication on next flush.
+		var ce *commitError
+		if errors.As(err, &ce) {
+			logger.Warn("Commit error (data may already be persisted), not buffering samples",
+				zap.Int("samples", len(samples)),
+				zap.Error(err))
+			return
+		}
+
 		// Buffer failed samples for later retry
 		if bufferEnabled && o.failoverBuffer != nil {
 			dropped := o.failoverBuffer.Push(samples)
@@ -494,6 +532,11 @@ func (o *Output) flush() {
 
 // doFlush performs the actual database insertion for a batch of samples.
 // This is the core flush logic, separated to enable retry wrapping.
+//
+// Delivery semantics: at-least-once. If Commit() succeeds server-side but the
+// response is lost, the caller receives a commitError (which is NOT retried).
+// Samples are optimistically counted as processed before the commit error is returned,
+// because they may already be persisted.
 //
 //nolint:gocyclo // complexity is acceptable for batch processing
 func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer) error {
@@ -534,8 +577,8 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 	count := 0
 	totalSamples := 0
 
-	// Track errors within this flush operation
-	var flushConvertErrors, flushInsertErrors uint64
+	// Track conversion errors within this flush operation
+	var flushConvertErrors uint64
 
 	// Calculate total samples for progress tracking
 	for _, container := range samples {
@@ -571,37 +614,55 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 				continue
 			}
 
-			// Execute insert
+			// Execute insert — abort entire batch on first error.
+			// The deferred batch.Rollback() handles cleanup.
 			_, execErr := stmt.ExecContext(ctx, row...)
 			if execErr != nil {
 				converter.Release(row) // Driver discards failed rows, safe to release
-				flushInsertErrors++
-				logger.Error("Failed to insert sample", zap.Error(execErr))
-				continue
+				o.insertErrors.Add(1)
+				if flushConvertErrors > 0 {
+					o.convertErrors.Add(flushConvertErrors)
+				}
+				return fmt.Errorf("failed to insert sample: %w", execErr)
 			}
 			pendingRows = append(pendingRows, row)
 			count++
 		}
 	}
 
+	// If all samples had conversion errors, nothing to commit.
+	// Conversion errors are deterministic — retrying won't help.
+	if count == 0 {
+		if flushConvertErrors > 0 {
+			o.convertErrors.Add(flushConvertErrors)
+			logger.Warn("All samples failed conversion, skipping commit",
+				zap.Uint64("convertErrors", flushConvertErrors),
+				zap.Int("totalSamples", totalSamples))
+		}
+		return nil
+	}
+
 	if err := batch.Commit(); err != nil {
-		return fmt.Errorf("failed to commit batch: %w", err)
+		// Commit errors are ambiguous: data may already be persisted server-side.
+		// Optimistically count samples as processed and wrap as commitError
+		// so retry logic does NOT re-insert (avoiding duplication).
+		if flushConvertErrors > 0 {
+			o.convertErrors.Add(flushConvertErrors)
+		}
+		o.samplesProcessed.Add(uint64(count))
+		return &commitError{err: err}
 	}
 
 	// Update cumulative atomic counters
 	if flushConvertErrors > 0 {
 		o.convertErrors.Add(flushConvertErrors)
 	}
-	if flushInsertErrors > 0 {
-		o.insertErrors.Add(flushInsertErrors)
-	}
 	o.samplesProcessed.Add(uint64(count))
 
 	// Log summary
-	if flushConvertErrors > 0 || flushInsertErrors > 0 {
-		logger.Warn("Flush completed with errors",
+	if flushConvertErrors > 0 {
+		logger.Warn("Flush completed with conversion errors",
 			zap.Uint64("convertErrors", flushConvertErrors),
-			zap.Uint64("insertErrors", flushInsertErrors),
 			zap.Int("successfulInserts", count),
 			zap.Int("totalSamples", totalSamples),
 			zap.Duration("elapsed", time.Since(start)))

@@ -258,6 +258,174 @@ func TestConfig_Struct(t *testing.T) {
 	})
 }
 
+// Test for Issue #6: JSON config zero-value overrides work correctly
+func TestParseConfig_ZeroValueOverrides(t *testing.T) {
+	t.Parallel()
+
+	t.Run("retryAttempts 0 overrides default", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := ParseConfig(output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"retryAttempts": 0,
+			}),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint(0), cfg.RetryAttempts, "retryAttempts: 0 should override default of 3")
+	})
+
+	t.Run("skipSchemaCreation false explicitly set", func(t *testing.T) {
+		t.Parallel()
+
+		// First set skipSchemaCreation to true via env, then override to false via JSON
+		cfg, err := ParseConfig(output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"skipSchemaCreation": false,
+			}),
+		})
+		require.NoError(t, err)
+		assert.False(t, cfg.SkipSchemaCreation, "skipSchemaCreation: false should be explicitly settable")
+	})
+
+	t.Run("skipSchemaCreation true explicitly set", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := ParseConfig(output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"skipSchemaCreation": true,
+			}),
+		})
+		require.NoError(t, err)
+		assert.True(t, cfg.SkipSchemaCreation, "skipSchemaCreation: true should work")
+	})
+
+	t.Run("unset fields keep defaults", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := ParseConfig(output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"addr": "custom:9000",
+			}),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint(3), cfg.RetryAttempts, "unset retryAttempts should keep default")
+		assert.Equal(t, 10000, cfg.BufferMaxSamples, "unset bufferMaxSamples should keep default")
+		assert.False(t, cfg.SkipSchemaCreation, "unset skipSchemaCreation should keep default")
+	})
+
+	t.Run("bufferMaxSamples 0 is set but fails validation", func(t *testing.T) {
+		t.Parallel()
+
+		// bufferMaxSamples: 0 with bufferEnabled: true should fail validation
+		_, err := ParseConfig(output.Params{
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"bufferMaxSamples": 0,
+			}),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "buffer max samples must be positive")
+	})
+}
+
+// Test for Issue #5: Env var parse errors return errors instead of being silently swallowed
+func TestParseConfig_InvalidEnvVars(t *testing.T) {
+	// NOT parallel: t.Setenv modifies process environment
+
+	tests := []struct {
+		name          string
+		envVar        string
+		envValue      string
+		errorContains string
+	}{
+		{
+			name:          "invalid K6_CLICKHOUSE_TLS_ENABLED",
+			envVar:        "K6_CLICKHOUSE_TLS_ENABLED",
+			envValue:      "yes",
+			errorContains: "invalid K6_CLICKHOUSE_TLS_ENABLED",
+		},
+		{
+			name:          "invalid K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY",
+			envVar:        "K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY",
+			envValue:      "nope",
+			errorContains: "invalid K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY",
+		},
+		{
+			name:          "invalid K6_CLICKHOUSE_RETRY_ATTEMPTS",
+			envVar:        "K6_CLICKHOUSE_RETRY_ATTEMPTS",
+			envValue:      "abc",
+			errorContains: "invalid K6_CLICKHOUSE_RETRY_ATTEMPTS",
+		},
+		{
+			name:          "invalid K6_CLICKHOUSE_RETRY_DELAY",
+			envVar:        "K6_CLICKHOUSE_RETRY_DELAY",
+			envValue:      "not-a-duration",
+			errorContains: "invalid K6_CLICKHOUSE_RETRY_DELAY",
+		},
+		{
+			name:          "invalid K6_CLICKHOUSE_RETRY_MAX_DELAY",
+			envVar:        "K6_CLICKHOUSE_RETRY_MAX_DELAY",
+			envValue:      "xyz",
+			errorContains: "invalid K6_CLICKHOUSE_RETRY_MAX_DELAY",
+		},
+		{
+			name:          "invalid K6_CLICKHOUSE_BUFFER_ENABLED",
+			envVar:        "K6_CLICKHOUSE_BUFFER_ENABLED",
+			envValue:      "maybe",
+			errorContains: "invalid K6_CLICKHOUSE_BUFFER_ENABLED",
+		},
+		{
+			name:          "invalid K6_CLICKHOUSE_BUFFER_MAX_SAMPLES",
+			envVar:        "K6_CLICKHOUSE_BUFFER_MAX_SAMPLES",
+			envValue:      "lots",
+			errorContains: "invalid K6_CLICKHOUSE_BUFFER_MAX_SAMPLES",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.envVar, tt.envValue)
+
+			_, err := ParseConfig(output.Params{})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errorContains)
+		})
+	}
+}
+
+// Test for Issue #5: URL param parse errors return errors
+func TestParseConfig_InvalidURLParams(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		urlParam      string
+		errorContains string
+	}{
+		{
+			name:          "invalid tlsEnabled URL param",
+			urlParam:      "localhost:9000?tlsEnabled=yes",
+			errorContains: "invalid tlsEnabled URL parameter",
+		},
+		{
+			name:          "invalid tlsInsecureSkipVerify URL param",
+			urlParam:      "localhost:9000?tlsInsecureSkipVerify=nah",
+			errorContains: "invalid tlsInsecureSkipVerify URL parameter",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := ParseConfig(output.Params{
+				ConfigArgument: tt.urlParam,
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errorContains)
+		})
+	}
+}
+
 // Helper function to marshal JSON for test cases
 func mustMarshalJSON(v any) []byte {
 	data, err := json.Marshal(v)

@@ -310,7 +310,7 @@ func ParseConfig(params output.Params) (Config, error) {
 			Table              string `json:"table"`
 			PushInterval       string `json:"pushInterval"`
 			SchemaMode         string `json:"schemaMode"`
-			SkipSchemaCreation bool   `json:"skipSchemaCreation"`
+			SkipSchemaCreation *bool  `json:"skipSchemaCreation"` // Pointer to distinguish unset from false
 			TLS                *struct {
 				Enabled            bool   `json:"enabled"`
 				InsecureSkipVerify bool   `json:"insecureSkipVerify"`
@@ -320,12 +320,12 @@ func ParseConfig(params output.Params) (Config, error) {
 				ServerName         string `json:"serverName"`
 			} `json:"tls"`
 			// Retry configuration
-			RetryAttempts uint   `json:"retryAttempts"`
+			RetryAttempts *uint  `json:"retryAttempts"` // Pointer to distinguish unset from 0
 			RetryDelay    string `json:"retryDelay"`
 			RetryMaxDelay string `json:"retryMaxDelay"`
 			// Buffer configuration
-			BufferEnabled    *bool  `json:"bufferEnabled"` // Pointer to distinguish unset from false
-			BufferMaxSamples int    `json:"bufferMaxSamples"`
+			BufferEnabled    *bool `json:"bufferEnabled"`    // Pointer to distinguish unset from false
+			BufferMaxSamples *int  `json:"bufferMaxSamples"` // Pointer to distinguish unset from 0
 			BufferDropPolicy string `json:"bufferDropPolicy"`
 		}{}
 
@@ -358,8 +358,8 @@ func ParseConfig(params output.Params) (Config, error) {
 		if jsonConf.SchemaMode != "" {
 			cfg.SchemaMode = jsonConf.SchemaMode
 		}
-		if jsonConf.SkipSchemaCreation {
-			cfg.SkipSchemaCreation = jsonConf.SkipSchemaCreation
+		if jsonConf.SkipSchemaCreation != nil {
+			cfg.SkipSchemaCreation = *jsonConf.SkipSchemaCreation
 		}
 		// Parse TLS config
 		if jsonConf.TLS != nil {
@@ -379,8 +379,8 @@ func ParseConfig(params output.Params) (Config, error) {
 			}
 		}
 		// Parse retry config
-		if jsonConf.RetryAttempts > 0 {
-			cfg.RetryAttempts = jsonConf.RetryAttempts
+		if jsonConf.RetryAttempts != nil {
+			cfg.RetryAttempts = *jsonConf.RetryAttempts
 		}
 		if jsonConf.RetryDelay != "" {
 			d, err := time.ParseDuration(jsonConf.RetryDelay)
@@ -400,8 +400,8 @@ func ParseConfig(params output.Params) (Config, error) {
 		if jsonConf.BufferEnabled != nil {
 			cfg.BufferEnabled = *jsonConf.BufferEnabled
 		}
-		if jsonConf.BufferMaxSamples > 0 {
-			cfg.BufferMaxSamples = jsonConf.BufferMaxSamples
+		if jsonConf.BufferMaxSamples != nil {
+			cfg.BufferMaxSamples = *jsonConf.BufferMaxSamples
 		}
 		if jsonConf.BufferDropPolicy != "" {
 			cfg.BufferDropPolicy = jsonConf.BufferDropPolicy
@@ -440,14 +440,18 @@ func ParseConfig(params output.Params) (Config, error) {
 
 			// Parse TLS URL parameters
 			if tlsEnabled := q.Get("tlsEnabled"); tlsEnabled != "" {
-				if enabled, err := strconv.ParseBool(tlsEnabled); err == nil {
-					cfg.TLS.Enabled = enabled
+				enabled, err := strconv.ParseBool(tlsEnabled)
+				if err != nil {
+					return cfg, fmt.Errorf("invalid tlsEnabled URL parameter value %q: %w", tlsEnabled, err)
 				}
+				cfg.TLS.Enabled = enabled
 			}
 			if tlsInsecure := q.Get("tlsInsecureSkipVerify"); tlsInsecure != "" {
-				if insecure, err := strconv.ParseBool(tlsInsecure); err == nil {
-					cfg.TLS.InsecureSkipVerify = insecure
+				insecure, err := strconv.ParseBool(tlsInsecure)
+				if err != nil {
+					return cfg, fmt.Errorf("invalid tlsInsecureSkipVerify URL parameter value %q: %w", tlsInsecure, err)
 				}
+				cfg.TLS.InsecureSkipVerify = insecure
 			}
 			if tlsCAFile := q.Get("tlsCAFile"); tlsCAFile != "" {
 				cfg.TLS.CAFile = tlsCAFile
@@ -489,14 +493,18 @@ func ParseConfig(params output.Params) (Config, error) {
 
 	// Parse TLS environment variables
 	if tlsEnabled := os.Getenv("K6_CLICKHOUSE_TLS_ENABLED"); tlsEnabled != "" {
-		if enabled, err := strconv.ParseBool(tlsEnabled); err == nil {
-			cfg.TLS.Enabled = enabled
+		enabled, err := strconv.ParseBool(tlsEnabled)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_TLS_ENABLED value %q: %w", tlsEnabled, err)
 		}
+		cfg.TLS.Enabled = enabled
 	}
 	if tlsInsecure := os.Getenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY"); tlsInsecure != "" {
-		if insecure, err := strconv.ParseBool(tlsInsecure); err == nil {
-			cfg.TLS.InsecureSkipVerify = insecure
+		insecure, err := strconv.ParseBool(tlsInsecure)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY value %q: %w", tlsInsecure, err)
 		}
+		cfg.TLS.InsecureSkipVerify = insecure
 	}
 	if tlsCAFile := os.Getenv("K6_CLICKHOUSE_TLS_CA_FILE"); tlsCAFile != "" {
 		cfg.TLS.CAFile = tlsCAFile
@@ -513,31 +521,41 @@ func ParseConfig(params output.Params) (Config, error) {
 
 	// Parse retry environment variables
 	if retryAttempts := os.Getenv("K6_CLICKHOUSE_RETRY_ATTEMPTS"); retryAttempts != "" {
-		if v, err := strconv.ParseUint(retryAttempts, 10, 32); err == nil {
-			cfg.RetryAttempts = uint(v)
+		v, err := strconv.ParseUint(retryAttempts, 10, 32)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_RETRY_ATTEMPTS value %q: %w", retryAttempts, err)
 		}
+		cfg.RetryAttempts = uint(v)
 	}
 	if retryDelay := os.Getenv("K6_CLICKHOUSE_RETRY_DELAY"); retryDelay != "" {
-		if d, err := time.ParseDuration(retryDelay); err == nil {
-			cfg.RetryDelay = d
+		d, err := time.ParseDuration(retryDelay)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_RETRY_DELAY value %q: %w", retryDelay, err)
 		}
+		cfg.RetryDelay = d
 	}
 	if retryMaxDelay := os.Getenv("K6_CLICKHOUSE_RETRY_MAX_DELAY"); retryMaxDelay != "" {
-		if d, err := time.ParseDuration(retryMaxDelay); err == nil {
-			cfg.RetryMaxDelay = d
+		d, err := time.ParseDuration(retryMaxDelay)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_RETRY_MAX_DELAY value %q: %w", retryMaxDelay, err)
 		}
+		cfg.RetryMaxDelay = d
 	}
 
 	// Parse buffer environment variables
 	if bufferEnabled := os.Getenv("K6_CLICKHOUSE_BUFFER_ENABLED"); bufferEnabled != "" {
-		if enabled, err := strconv.ParseBool(bufferEnabled); err == nil {
-			cfg.BufferEnabled = enabled
+		enabled, err := strconv.ParseBool(bufferEnabled)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_BUFFER_ENABLED value %q: %w", bufferEnabled, err)
 		}
+		cfg.BufferEnabled = enabled
 	}
 	if bufferMaxSamples := os.Getenv("K6_CLICKHOUSE_BUFFER_MAX_SAMPLES"); bufferMaxSamples != "" {
-		if v, err := strconv.Atoi(bufferMaxSamples); err == nil {
-			cfg.BufferMaxSamples = v
+		v, err := strconv.Atoi(bufferMaxSamples)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_BUFFER_MAX_SAMPLES value %q: %w", bufferMaxSamples, err)
 		}
+		cfg.BufferMaxSamples = v
 	}
 	if bufferDropPolicy := os.Getenv("K6_CLICKHOUSE_BUFFER_DROP_POLICY"); bufferDropPolicy != "" {
 		cfg.BufferDropPolicy = bufferDropPolicy

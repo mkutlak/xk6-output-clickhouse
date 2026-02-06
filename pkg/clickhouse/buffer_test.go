@@ -1,6 +1,8 @@
 package clickhouse
 
 import (
+	"fmt"
+	"io"
 	"sync"
 	"testing"
 
@@ -289,7 +291,7 @@ func TestIsRetryableError(t *testing.T) {
 		},
 		{
 			name:     "EOF",
-			err:      &mockError{msg: "unexpected EOF"},
+			err:      fmt.Errorf("read: %w", io.ErrUnexpectedEOF),
 			expected: true,
 		},
 		{
