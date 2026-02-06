@@ -324,8 +324,8 @@ func ParseConfig(params output.Params) (Config, error) {
 			RetryDelay    string `json:"retryDelay"`
 			RetryMaxDelay string `json:"retryMaxDelay"`
 			// Buffer configuration
-			BufferEnabled    *bool `json:"bufferEnabled"`    // Pointer to distinguish unset from false
-			BufferMaxSamples *int  `json:"bufferMaxSamples"` // Pointer to distinguish unset from 0
+			BufferEnabled    *bool  `json:"bufferEnabled"`    // Pointer to distinguish unset from false
+			BufferMaxSamples *int   `json:"bufferMaxSamples"` // Pointer to distinguish unset from 0
 			BufferDropPolicy string `json:"bufferDropPolicy"`
 		}{}
 
