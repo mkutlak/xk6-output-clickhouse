@@ -65,7 +65,7 @@ func (e *commitError) Unwrap() error { return e.err }
 
 // escapeIdentifier escapes a ClickHouse identifier with backticks
 func escapeIdentifier(name string) string {
-	return "`" + name + "`"
+	return "`" + strings.ReplaceAll(name, "`", "\\`") + "`"
 }
 
 // Output implements the output.Output interface

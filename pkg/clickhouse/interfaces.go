@@ -17,10 +17,6 @@ type SchemaCreator interface {
 	// InsertQuery returns the INSERT statement for this schema.
 	// The query should use ? placeholders for values.
 	InsertQuery(database, table string) string
-
-	// ColumnCount returns the number of columns in the schema.
-	// Used for pre-allocating row buffers.
-	ColumnCount() int
 }
 
 // SampleConverter converts k6 metric samples to rows for ClickHouse insertion.

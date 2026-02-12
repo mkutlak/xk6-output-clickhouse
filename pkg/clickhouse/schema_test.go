@@ -101,13 +101,6 @@ func TestSimpleSchema_InsertQuery(t *testing.T) {
 	}
 }
 
-func TestSimpleSchema_ColumnCount(t *testing.T) {
-	t.Parallel()
-
-	schema := SimpleSchema{}
-	assert.Equal(t, 4, schema.ColumnCount())
-}
-
 func TestConvertToSimple(t *testing.T) {
 	t.Parallel()
 
@@ -326,13 +319,6 @@ func TestCompatibleSchema_InsertQuery(t *testing.T) {
 	}
 }
 
-func TestCompatibleSchema_ColumnCount(t *testing.T) {
-	t.Parallel()
-
-	schema := CompatibleSchema{}
-	assert.Equal(t, 21, schema.ColumnCount())
-}
-
 func TestConvertToCompatible(t *testing.T) {
 	t.Parallel()
 
@@ -355,7 +341,7 @@ func TestConvertToCompatible(t *testing.T) {
 			Value: 1.0,
 		}
 
-		cs, err := convertToCompatible(sample)
+		cs, err := convertToCompatible(sample, 12345)
 		assert.NoError(t, err)
 		assert.Equal(t, uint32(123), cs.BuildID)
 		assert.Equal(t, uint16(200), cs.Status)
@@ -377,7 +363,7 @@ func TestConvertToCompatible(t *testing.T) {
 			Value: 1.0,
 		}
 
-		_, err := convertToCompatible(sample)
+		_, err := convertToCompatible(sample, 12345)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse buildId")
 	})
@@ -398,7 +384,7 @@ func TestConvertToCompatible(t *testing.T) {
 			Value: 1.0,
 		}
 
-		_, err := convertToCompatible(sample)
+		_, err := convertToCompatible(sample, 12345)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse status")
 	})
@@ -528,7 +514,7 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 			t.Parallel()
 
 			sample := tt.setupSample()
-			result, err := convertToCompatible(sample)
+			result, err := convertToCompatible(sample, 12345)
 
 			tt.checkResult(t, result, err)
 		})
@@ -669,7 +655,7 @@ func BenchmarkConvertToCompatible(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		cs, err := convertToCompatible(sample)
+		cs, err := convertToCompatible(sample, 12345)
 		if err != nil {
 			b.Fatal(err)
 		}

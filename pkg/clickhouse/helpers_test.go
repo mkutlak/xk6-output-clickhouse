@@ -83,7 +83,7 @@ func GetTestConfig(endpoint string) Config {
 		Table:        "samples",
 		User:         testUsername,
 		Password:     testPassword,
-		PushInterval: 100, // 100ms for fast tests
+		PushInterval: 100 * time.Millisecond, // 100ms for fast tests
 		SchemaMode:   "simple",
 	}
 }

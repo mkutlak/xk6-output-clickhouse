@@ -79,11 +79,6 @@ func (s SimpleSchema) InsertQuery(database, table string) string {
 		escapeIdentifier(database), escapeIdentifier(table))
 }
 
-// ColumnCount returns the number of columns (4 for simple schema).
-func (s SimpleSchema) ColumnCount() int {
-	return 4
-}
-
 // simpleSample represents a sample for the simple schema.
 type simpleSample struct {
 	Timestamp time.Time

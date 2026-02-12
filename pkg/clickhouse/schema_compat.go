@@ -17,9 +17,11 @@ import (
 // This serves as an example of a custom schema implementation. Fork this file
 // to create your own schema with the columns you need.
 var CompatibleSchemaImpl = SchemaImplementation{
-	Name:      "compatible",
-	Schema:    CompatibleSchema{},
-	Converter: CompatibleConverter{},
+	Name:   "compatible",
+	Schema: CompatibleSchema{},
+	Converter: CompatibleConverter{
+		defaultBuildID: safeUnixToUint32(time.Now().Unix()),
+	},
 }
 
 func init() {
@@ -128,11 +130,6 @@ func (s CompatibleSchema) InsertQuery(database, table string) string {
 	`, escapeIdentifier(database), escapeIdentifier(table))
 }
 
-// ColumnCount returns the number of columns (21 for compatible schema).
-func (s CompatibleSchema) ColumnCount() int {
-	return 21
-}
-
 // compatibleSample represents a sample for the compatible schema.
 type compatibleSample struct {
 	Timestamp        time.Time
@@ -159,7 +156,7 @@ type compatibleSample struct {
 }
 
 // convertToCompatible converts a k6 sample to the compatible schema format.
-func convertToCompatible(sample metrics.Sample) (compatibleSample, error) {
+func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatibleSample, error) {
 	// Get a reusable map from the pool to reduce allocations
 	extraTags := tagMapPool.Get().(map[string]string)
 	clearMap(extraTags) // Ensure map is clean before use
@@ -175,7 +172,8 @@ func convertToCompatible(sample metrics.Sample) (compatibleSample, error) {
 
 	// Extract and map tags to columns
 	if sample.Tags != nil {
-		tagMap := sample.Tags.Map()
+		tagMap := make(map[string]string, len(sample.Tags.Map()))
+		maps.Copy(tagMap, sample.Tags.Map())
 
 		// TestID (with aliases)
 		if testID, ok := getAndDelete(tagMap, "testid"); ok {
@@ -194,9 +192,9 @@ func convertToCompatible(sample metrics.Sample) (compatibleSample, error) {
 				return cs, fmt.Errorf("failed to parse buildId: %w", err)
 			}
 		}
-		// If not set from tags, generate from timestamp
+		// If not set from tags, use the default generated at startup
 		if cs.BuildID == 0 {
-			cs.BuildID = safeUnixToUint32(time.Now().Unix())
+			cs.BuildID = defaultBuildID
 		}
 
 		// String fields
@@ -238,7 +236,7 @@ func convertToCompatible(sample metrics.Sample) (compatibleSample, error) {
 	} else {
 		// No tags, use defaults
 		cs.TestID = "default"
-		cs.BuildID = safeUnixToUint32(time.Now().Unix())
+		cs.BuildID = defaultBuildID
 		cs.Branch = "master"
 	}
 
@@ -247,11 +245,15 @@ func convertToCompatible(sample metrics.Sample) (compatibleSample, error) {
 
 // CompatibleConverter implements SampleConverter for the compatible schema.
 // It extracts known k6 tags into dedicated columns with type conversion.
-type CompatibleConverter struct{}
+type CompatibleConverter struct {
+	// defaultBuildID is set once at creation time and used for all samples
+	// that don't provide a buildId tag.
+	defaultBuildID uint32
+}
 
 // Convert transforms a k6 sample into a row for the compatible schema.
 func (c CompatibleConverter) Convert(ctx context.Context, sample metrics.Sample) ([]any, error) {
-	cs, err := convertToCompatible(sample)
+	cs, err := convertToCompatible(sample, c.defaultBuildID)
 	if err != nil {
 		// Return tag map to pool even on error
 		tagMapPool.Put(cs.ExtraTags)

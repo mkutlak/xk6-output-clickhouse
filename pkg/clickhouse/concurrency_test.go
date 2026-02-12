@@ -151,7 +151,7 @@ func TestConcurrentConvertToCompatible(t *testing.T) {
 			}
 
 			for range 100 {
-				cs, err := convertToCompatible(sample)
+				cs, err := convertToCompatible(sample, 12345)
 				if err != nil {
 					errors <- err
 					return
@@ -391,7 +391,7 @@ func TestRaceConditions(t *testing.T) {
 			ss := convertToSimple(sample)
 			assert.NotNil(t, ss.Tags)
 
-			cs, err := convertToCompatible(sample)
+			cs, err := convertToCompatible(sample, 12345)
 			assert.NoError(t, err)
 			assert.NotNil(t, cs.ExtraTags)
 		}(i)
