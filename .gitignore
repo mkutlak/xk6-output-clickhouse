@@ -10,6 +10,7 @@ k6
 
 # Output
 *.out
+tests/
 
 # Go workspace
 go.work

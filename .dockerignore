@@ -20,11 +20,11 @@ dist/
 *.dylib
 *.test
 *.out
-coverage.html
 
 # Test files
 *_test.go
 testdata/
+tests/
 
 # IDE files
 .vscode/

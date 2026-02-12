@@ -22,9 +22,10 @@ test:
 # Run tests with coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	@go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
-	@go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report generated: coverage.html"
+	@mkdir -p tests/
+	@go test -v -race -coverprofile=tests/coverage.out -covermode=atomic ./...
+	@go tool cover -html=tests/coverage.out -o tests/coverage.html
+	@echo "Coverage report generated: tests/coverage.html"
 
 # Format code
 fmt:
@@ -55,7 +56,8 @@ check: fmt vet tidy test
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -f k6
-	@rm -f coverage.out coverage.html
+	@rm -f tests/coverage.out tests/coverage.html
+	@rmdir tests/
 	@echo "Clean complete"
 
 # Build Docker image
