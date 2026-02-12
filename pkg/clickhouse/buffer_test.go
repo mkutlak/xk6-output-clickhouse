@@ -210,11 +210,11 @@ func TestSampleBuffer_Concurrency(t *testing.T) {
 	itemsPerGoroutine := 100
 
 	// Concurrent pushes
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < itemsPerGoroutine; j++ {
+			for j := range itemsPerGoroutine {
 				buf.Push([]metrics.SampleContainer{newMockContainer(id*1000 + j)})
 			}
 		}(i)
