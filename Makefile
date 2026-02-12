@@ -48,6 +48,12 @@ tidy:
 	@echo "Tidying go.mod and go.sum..."
 	@go mod tidy
 
+# Update dependencies to their latest minor/patch versions
+update:
+	@echo "Updating go modules..."
+	@go get -u ./...
+	@go mod tidy
+
 # Run all checks (format, vet, lint, test)
 check: fmt vet tidy test
 	@echo "All checks passed!"
@@ -158,6 +164,7 @@ help:
 	@echo "  make lint                 - Run golangci-lint"
 	@echo "  make vet                  - Run go vet"
 	@echo "  make tidy                 - Tidy go.mod and go.sum"
+	@echo "  make update               - Update dependencies to latest versions"
 	@echo "  make check                - Run all checks (fmt, vet, tidy, test)"
 	@echo "  make clean                - Remove build artifacts"
 	@echo "  make install-tools        - Install development tools"
