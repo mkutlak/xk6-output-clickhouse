@@ -22,6 +22,8 @@ make docker-compose-up
 make build
 ```
 
+This produces a `bin/k6` binary.
+
 ### Run Tests
 
 ```bash

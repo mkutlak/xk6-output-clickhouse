@@ -6,7 +6,7 @@ Thank you for your interest in contributing to `xk6-output-clickhouse`! We welco
 
 ### Prerequisites
 
-- [Go](https://golang.org/doc/install) (1.22 or later recommended)
+- [Go](https://golang.org/doc/install) (1.25 or later recommended)
 - [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/install/) (for integration testing)
 - [Make](https://www.gnu.org/software/make/)
 
@@ -36,7 +36,7 @@ To build the custom k6 binary with the ClickHouse extension:
 make build
 ```
 
-This will produce a `./k6` binary in the current directory.
+This will produce a `./bin/k6` binary.
 
 ### Testing
 
@@ -46,6 +46,12 @@ We encourage Test Driven Development (TDD).
 
   ```bash
   make test
+  ```
+
+- **Run a single test:**
+
+  ```bash
+  go test -race -run TestName ./pkg/clickhouse/
   ```
 
 - **Run tests with coverage:**
