@@ -1,9 +1,10 @@
 version: "2"
 
 run:
-  timeout: 5m
+  go: "1.25"
+  allow-parallel-runners: true
   modules-download-mode: readonly
-  go: "1.25.3"
+  timeout: 5m
 
 formatters:
   enable:

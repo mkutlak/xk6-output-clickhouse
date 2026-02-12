@@ -12,25 +12,12 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
 
-  # Go formatting - gofmt
+  # Go
   - repo: https://github.com/TekWizely/pre-commit-golang
     rev: v1.0.0-rc.4
     hooks:
-      - id: go-fmt
-
-  # Go mod tidy
-  - repo: local
-    hooks:
+      - id: go-vet-repo-mod
       - id: go-mod-tidy
-        name: go mod tidy
-        entry: go mod tidy
-        language: system
-        pass_filenames: false
-        files: (\.go$|go\.mod$|go\.sum$)
-
-  # Go linting - golangci-lint
-  - repo: https://github.com/golangci/golangci-lint
-    rev: v2.9.0
-    hooks:
-      - id: golangci-lint
-        args: [--fix]
+      - id: golangci-lint-repo-mod
+        args: ["--fix"]
+      - id: go-test-repo-mod
