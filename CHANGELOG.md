@@ -1,3 +1,14 @@
+## [0.5.3](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.2...v0.5.3) (2026-02-12)
+
+### Code Refactoring
+
+* simplify schema interface and improve tag isolation ([87de26e](https://github.com/mkutlak/xk6-output-clickhouse/commit/87de26e4096e405dcbf5c64aff3e615469d9348a))
+
+### Documentation
+
+* Move noise from README to docs/ ([4278d00](https://github.com/mkutlak/xk6-output-clickhouse/commit/4278d002ab7d68cd72d2886e0fb8b5d8135513e2))
+* Update contributing guide ([025e3b8](https://github.com/mkutlak/xk6-output-clickhouse/commit/025e3b8216e60d1c5d66ff84da49cbeec55400f8))
+
 ## [0.5.2](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.1...v0.5.2) (2026-02-06)
 
 ### Bug Fixes
