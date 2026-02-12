@@ -1,7 +1,13 @@
 .PHONY: build clean test test-coverage fmt lint vet tidy check install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-compose-test release-binaries docker-build-multi docker-push docker-tag checksums help all
 
+# Project variables
+REPO_OWNER ?= mkutlak
+REPO_NAME ?= xk6-output-clickhouse
+EXTENSION_MODULE ?= github.com/$(REPO_OWNER)/$(REPO_NAME)
+XK6_VERSION ?= latest
+
 # CI/CD variables
-IMAGE_NAME ?= ghcr.io/mkutlak/xk6-output-clickhouse
+IMAGE_NAME ?= ghcr.io/$(REPO_OWNER)/$(REPO_NAME)
 VERSION ?= latest
 
 # Default target
@@ -9,10 +15,11 @@ all: check build
 
 # Build the k6 binary with the extension
 build:
-	@echo "Building k6 with xk6-output-clickhouse..."
+	@echo "Building k6 with $(REPO_NAME)..."
 	@go mod download
-	@xk6 build --with github.com/mkutlak/xk6-output-clickhouse=.
-	@echo "Build complete: ./k6"
+	@mkdir -p bin/
+	@go run go.k6.io/xk6/cmd/xk6@$(XK6_VERSION) build --output bin/k6 --with $(EXTENSION_MODULE)=.
+	@echo "Build complete: ./bin/k6"
 
 # Run tests
 test:
@@ -61,21 +68,21 @@ check: fmt vet tidy test
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f k6
-	@rm -f tests/coverage.out tests/coverage.html
-	@rmdir tests/
+	@rm -rf bin/
+	@rm -rf tests/
+	@rm -rf dist/
 	@echo "Clean complete"
 
 # Build Docker image
 docker-build:
 	@echo "Building Docker image..."
-	@docker build -t xk6-output-clickhouse:latest .
-	@echo "Docker image built: xk6-output-clickhouse:latest"
+	@docker build -t $(IMAGE_NAME):latest .
+	@echo "Docker image built: $(IMAGE_NAME):latest"
 
 # Clean Docker image
 docker-clean:
 	@echo "Removing Docker image..."
-	@docker rmi xk6-output-clickhouse:latest || true
+	@docker rmi $(IMAGE_NAME):latest || true
 	@echo "Docker image removed"
 
 # Start docker compose services (ClickHouse and Grafana)
@@ -108,9 +115,9 @@ release-binaries: check
 	@for os in linux; do \
 		for arch in amd64 arm64; do \
 			echo "Building k6 for $$os/$$arch..."; \
-			GOOS=$$os GOARCH=$$arch GOPRIVATE="go.k6.io/k6" xk6 build \
+			GOOS=$$os GOARCH=$$arch GOPRIVATE="go.k6.io/k6" go run go.k6.io/xk6/cmd/xk6@$(XK6_VERSION) build \
 				--output ./dist/k6-$$os-$$arch \
-				--with github.com/mkutlak/xk6-output-clickhouse=.; \
+				--with $(EXTENSION_MODULE)=.; \
 			sha256sum ./dist/k6-$$os-$$arch > ./dist/k6-$$os-$$arch.sha256; \
 		done; \
 	done
@@ -149,7 +156,7 @@ checksums:
 install-tools:
 	@echo "Installing development tools..."
 	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	@go install go.k6.io/xk6/cmd/xk6@latest
+	@go install go.k6.io/xk6/cmd/xk6@$(XK6_VERSION)
 	@echo "Tools installed"
 
 # Show help
