@@ -1,3 +1,9 @@
+## [0.5.4](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.3...v0.5.4) (2026-02-19)
+
+### Bug Fixes
+
+* **clickhouse:** fix ui_feature tag ([7138a25](https://github.com/mkutlak/xk6-output-clickhouse/commit/7138a25d1ff0f34a3724337c9c81e1f9fa6b8188))
+
 ## [0.5.3](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.2...v0.5.3) (2026-02-12)
 
 ### Code Refactoring
