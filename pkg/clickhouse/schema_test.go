@@ -487,6 +487,52 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 			},
 		},
 		{
+			name: "uiFeature camelCase alias",
+			setupSample: func() metrics.Sample {
+				metric := registry.MustNewMetric("browser_web_vital_fcp", metrics.Gauge)
+				tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
+					"uiFeature": "jobs",
+				})
+				return metrics.Sample{
+					TimeSeries: metrics.TimeSeries{
+						Metric: metric,
+						Tags:   tags,
+					},
+					Time:  time.Now(),
+					Value: 1.0,
+				}
+			},
+			checkResult: func(t *testing.T, cs compatibleSample, err error) {
+				assert.NoError(t, err)
+				assert.Equal(t, "jobs", cs.UIFeature)
+				assert.NotContains(t, cs.ExtraTags, "uiFeature")
+			},
+		},
+		{
+			name: "ui_feature snake_case takes precedence over uiFeature",
+			setupSample: func() metrics.Sample {
+				metric := registry.MustNewMetric("browser_web_vital_fcp", metrics.Gauge)
+				tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
+					"ui_feature": "snake",
+					"uiFeature":  "camel",
+				})
+				return metrics.Sample{
+					TimeSeries: metrics.TimeSeries{
+						Metric: metric,
+						Tags:   tags,
+					},
+					Time:  time.Now(),
+					Value: 1.0,
+				}
+			},
+			checkResult: func(t *testing.T, cs compatibleSample, err error) {
+				assert.NoError(t, err)
+				assert.Equal(t, "snake", cs.UIFeature)
+				// camelCase falls through to extra_tags since snake_case was consumed
+				assert.Equal(t, "camel", cs.ExtraTags["uiFeature"])
+			},
+		},
+		{
 			name: "buildId max uint32",
 			setupSample: func() metrics.Sample {
 				metric := registry.MustNewMetric("http_reqs", metrics.Counter)

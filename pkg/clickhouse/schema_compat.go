@@ -201,7 +201,12 @@ func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatib
 		cs.Release = getAndDeleteWithDefault(tagMap, "release", "")
 		cs.Version = getAndDeleteWithDefault(tagMap, "version", "")
 		cs.Branch = getAndDeleteWithDefault(tagMap, "branch", "master")
-		cs.UIFeature = getAndDeleteWithDefault(tagMap, "ui_feature", "")
+		// UIFeature (with camelCase alias)
+		if uiFeature, ok := getAndDelete(tagMap, "ui_feature"); ok {
+			cs.UIFeature = uiFeature
+		} else {
+			cs.UIFeature = getAndDeleteWithDefault(tagMap, "uiFeature", "")
+		}
 		cs.Scenario = getAndDeleteWithDefault(tagMap, "scenario", "")
 		cs.Name = getAndDeleteWithDefault(tagMap, "name", "")
 		cs.Method = getAndDeleteWithDefault(tagMap, "method", "")
