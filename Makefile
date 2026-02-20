@@ -1,4 +1,4 @@
-.PHONY: build clean test test-coverage fmt lint vet tidy check install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-compose-test release-binaries docker-build-multi docker-push docker-tag checksums help all
+.PHONY: build clean test test-coverage fmt lint vet tidy check install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-compose-test docker-dev docker-test docker-ci docker-clean-all release-binaries docker-build-multi docker-push docker-tag checksums help all
 
 # Project variables
 REPO_OWNER ?= mkutlak
@@ -108,6 +108,29 @@ docker-compose-test:
 	@docker compose --profile test run --rm k6
 	@echo "Test completed"
 
+# Start docker compose services for development (profile: dev)
+docker-dev:
+	@echo "Starting development environment..."
+	@docker compose --profile dev up --build
+
+# Run tests in docker compose (profile: test)
+docker-test:
+	@echo "Running tests in docker compose..."
+	@docker compose --profile test up --build --abort-on-container-exit --exit-code-from k6-test
+
+# Run CI pipeline in docker compose (profile: ci)
+docker-ci:
+	@echo "Running CI pipeline..."
+	@docker compose --profile ci up --build --abort-on-container-exit
+	@docker compose --profile ci run test-validator
+
+# Clean all docker compose resources (volumes, orphans)
+docker-clean-all:
+	@echo "Cleaning all docker compose resources..."
+	@docker compose down -v --remove-orphans
+	@docker system prune -f
+	@echo "Docker cleanup complete"
+
 # Build release binaries for multiple architectures
 release-binaries: check
 	@echo "Building release binaries..."
@@ -187,6 +210,10 @@ help:
 	@echo "  make docker-compose-down  - Stop and remove all services"
 	@echo "  make docker-compose-logs  - View logs from services"
 	@echo "  make docker-compose-test  - Build and run k6 test with docker-compose"
+	@echo "  make docker-dev           - Start development environment (profile: dev)"
+	@echo "  make docker-test          - Run tests in docker compose (profile: test)"
+	@echo "  make docker-ci            - Run CI pipeline (profile: ci)"
+	@echo "  make docker-clean-all     - Clean all docker resources (volumes, orphans)"
 	@echo ""
 	@echo "Release (CI/CD):"
 	@echo "  make release-binaries     - Build release binaries for amd64 and arm64"

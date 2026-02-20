@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'pkg/**'
+      - 'register.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/ci.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: Code Validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Check code formatting
+        run: |
+          output=$(gofmt -l .)
+          if [ -n "$output" ]; then
+            echo "Code formatting issues found in:"
+            echo "$output"
+            echo "Run 'go fmt ./...'"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Check go mod tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "go.mod or go.sum not tidy. Run 'go mod tidy'"
+            exit 1
+          fi
+
+      - name: Run unit tests with race detection
+        run: go test -v -race -timeout 5m ./...
+
+  build-check:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Install xk6
+        run: go install go.k6.io/xk6/cmd/xk6@latest
+
+      - name: Build k6 with extension
+        run: |
+          MODULE_NAME=$(go list -m)
+          GOPRIVATE="go.k6.io/k6" xk6 build \
+            --output ./k6ext \
+            --with "${MODULE_NAME}=."
+
+      - name: Verify binary
+        run: |
+          ./k6ext version
+          file ./k6ext
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run integration tests
+        env:
+          CLICKHOUSE_VERSION: 24.11-alpine
+          HEALTHCHECK_INTERVAL: 3s
+        run: make docker-ci
+        timeout-minutes: 10
+
+      - name: Collect Docker logs
+        if: failure()
+        run: docker compose logs > docker-logs.txt
+
+      - name: Upload Docker logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: docker-logs
+          path: docker-logs.txt
+          retention-days: 7
+
+      - name: Clean up Docker Compose
+        if: always()
+        run: make docker-compose-down || true
