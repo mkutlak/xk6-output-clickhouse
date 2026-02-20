@@ -213,7 +213,12 @@ func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatib
 		cs.ErrorCode = getAndDeleteWithDefault(tagMap, "error_code", "")
 		cs.Rating = getAndDeleteWithDefault(tagMap, "rating", "")
 		cs.ResourceType = getAndDeleteWithDefault(tagMap, "resource_type", "")
-		cs.CheckName = getAndDeleteWithDefault(tagMap, "check_name", "")
+		// CheckName (with alias: k6 native tag is "check", "check_name" is a custom alias)
+		if checkName, ok := getAndDelete(tagMap, "check"); ok {
+			cs.CheckName = checkName
+		} else {
+			cs.CheckName = getAndDeleteWithDefault(tagMap, "check_name", "")
+		}
 
 		// GroupName (with alias)
 		if groupName, ok := getAndDelete(tagMap, "group_name"); ok {

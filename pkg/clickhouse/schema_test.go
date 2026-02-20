@@ -533,6 +533,50 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 			},
 		},
 		{
+			name: "check tag mapped to check_name",
+			setupSample: func() metrics.Sample {
+				metric := registry.MustNewMetric("checks", metrics.Rate)
+				tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
+					"check": "my check name",
+				})
+				return metrics.Sample{
+					TimeSeries: metrics.TimeSeries{
+						Metric: metric,
+						Tags:   tags,
+					},
+					Time:  time.Now(),
+					Value: 1.0,
+				}
+			},
+			checkResult: func(t *testing.T, cs compatibleSample, err error) {
+				assert.NoError(t, err)
+				assert.Equal(t, "my check name", cs.CheckName)
+				assert.NotContains(t, cs.ExtraTags, "check")
+			},
+		},
+		{
+			name: "check_name alias fallback",
+			setupSample: func() metrics.Sample {
+				metric := registry.MustNewMetric("checks", metrics.Rate)
+				tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
+					"check_name": "fallback check",
+				})
+				return metrics.Sample{
+					TimeSeries: metrics.TimeSeries{
+						Metric: metric,
+						Tags:   tags,
+					},
+					Time:  time.Now(),
+					Value: 1.0,
+				}
+			},
+			checkResult: func(t *testing.T, cs compatibleSample, err error) {
+				assert.NoError(t, err)
+				assert.Equal(t, "fallback check", cs.CheckName)
+				assert.NotContains(t, cs.ExtraTags, "check_name")
+			},
+		},
+		{
 			name: "buildId max uint32",
 			setupSample: func() metrics.Sample {
 				metric := registry.MustNewMetric("http_reqs", metrics.Counter)
