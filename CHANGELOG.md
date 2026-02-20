@@ -1,3 +1,9 @@
+## [0.5.5](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.4...v0.5.5) (2026-02-20)
+
+### Bug Fixes
+
+* **clickhouse:** fix check_name tag ([8eafc1c](https://github.com/mkutlak/xk6-output-clickhouse/commit/8eafc1cdf0d014c30f17419347c6992d10bdf93c))
+
 ## [0.5.4](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.3...v0.5.4) (2026-02-19)
 
 ### Bug Fixes
