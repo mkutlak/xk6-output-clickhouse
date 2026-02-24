@@ -79,6 +79,10 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+    outputs:
+      new_release_published: ${{ steps.release.outputs.new_release_published }}
+      new_release_git_tag: ${{ steps.release.outputs.new_release_git_tag }}
+      new_release_version: ${{ steps.release.outputs.new_release_version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -92,6 +96,7 @@ jobs:
           node-version: '24'
 
       - name: Run semantic-release
+        id: release
         uses: cycjimmy/semantic-release-action@v6
         with:
           semantic_version: 25.0.2
@@ -104,3 +109,137 @@ jobs:
             conventional-changelog-conventionalcommits
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-binaries:
+    name: Build Release Binaries (${{ matrix.os }}/${{ matrix.arch }})
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      matrix:
+        os: [linux]
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Install xk6
+        run: go install go.k6.io/xk6/cmd/xk6@latest
+
+      - name: Build k6 binary (${{ matrix.os }}/${{ matrix.arch }})
+        run: |
+          MODULE_NAME=$(go list -m)
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} \
+          GOPRIVATE="go.k6.io/k6" xk6 build \
+            --output ./k6-${{ matrix.os }}-${{ matrix.arch }} \
+            --with "${MODULE_NAME}=."
+
+      - name: Create checksum
+        run: sha256sum ./k6-${{ matrix.os }}-${{ matrix.arch }} > k6-${{ matrix.os }}-${{ matrix.arch }}.sha256
+
+      - name: Attest binary
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ./k6-${{ matrix.os }}-${{ matrix.arch }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: k6-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            ./k6-${{ matrix.os }}-${{ matrix.arch }}
+            ./k6-${{ matrix.os }}-${{ matrix.arch }}.sha256
+          retention-days: 1
+
+  build-docker:
+    name: Build and Push Docker Image
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/xk6-output-clickhouse
+          tags: |
+            type=raw,value=${{ needs.semantic-release.outputs.new_release_git_tag }}
+            type=raw,value=${{ needs.semantic-release.outputs.new_release_version }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Attest Docker image
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/xk6-output-clickhouse
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  upload-assets:
+    name: Upload Release Assets
+    needs: [semantic-release, build-binaries, build-docker]
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: ./artifacts
+          merge-multiple: true
+
+      - name: Upload binaries to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.semantic-release.outputs.new_release_git_tag }}" ./artifacts/* \
+            --repo "${{ github.repository }}" \
+            --clobber

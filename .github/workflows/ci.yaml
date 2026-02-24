@@ -117,7 +117,7 @@ jobs:
 
       - name: Run integration tests
         env:
-          CLICKHOUSE_VERSION: 24.11-alpine
+          CLICKHOUSE_VERSION: 25.12-alpine
           HEALTHCHECK_INTERVAL: 3s
         run: make docker-ci
         timeout-minutes: 10
@@ -132,7 +132,7 @@ jobs:
         with:
           name: docker-logs
           path: docker-logs.txt
-          retention-days: 7
+          retention-days: 3
 
       - name: Clean up Docker Compose
         if: always()
