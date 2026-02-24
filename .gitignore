@@ -23,9 +23,11 @@ go.work
 *.swo
 *~
 
+
 # OS
 .DS_Store
 Thumbs.db
 
 # Claude
 .claude
+.omc

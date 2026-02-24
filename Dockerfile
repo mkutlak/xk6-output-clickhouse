@@ -32,7 +32,9 @@ LABEL org.opencontainers.image.title="xk6-output-clickhouse" \
 
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 12345 k6 && \
-    adduser -D -u 12345 -G k6 k6
+    adduser -D -u 12345 -G k6 k6 && \
+    mkdir -p /home/k6/results && \
+    chown k6:k6 /home/k6/results
 
 COPY --from=builder /build/k6 /usr/bin/k6
 USER 12345

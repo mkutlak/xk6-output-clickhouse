@@ -142,7 +142,7 @@ services:
         --user ${CLICKHOUSE_USER:-default}
         --password ${CLICKHOUSE_PASSWORD:-password}
         --database ${CLICKHOUSE_DB:-k6}
-        --query "SELECT count() AS row_count FROM samples WHERE row_count > 0"
+        --query "SELECT count() AS row_count FROM samples HAVING row_count > 0"
     restart: "no"
     networks:
       - k6-network

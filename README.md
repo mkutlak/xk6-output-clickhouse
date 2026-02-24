@@ -1,6 +1,6 @@
 # xk6-output-clickhouse
 
-[![Build](https://github.com/mkutlak/xk6-output-clickhouse/actions/workflows/validate.yaml/badge.svg)](https://github.com/mkutlak/xk6-output-clickhouse/actions/workflows/validate.yaml)
+[![Build](https://github.com/mkutlak/xk6-output-clickhouse/actions/workflows/main.yaml/badge.svg)](https://github.com/mkutlak/xk6-output-clickhouse/actions/workflows/main.yaml)
 [![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
