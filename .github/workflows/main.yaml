@@ -234,6 +234,7 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: ./artifacts
+          pattern: k6-*
           merge-multiple: true
 
       - name: Upload binaries to release
