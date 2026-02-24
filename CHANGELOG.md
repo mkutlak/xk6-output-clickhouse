@@ -1,3 +1,9 @@
+## [0.5.7](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.6...v0.5.7) (2026-02-24)
+
+### Bug Fixes
+
+* **ci:** correct test validator query and k6 results dir permissions ([cd27bac](https://github.com/mkutlak/xk6-output-clickhouse/commit/cd27bac23a2334e7f9d750a853cfcc53e4de7c9f))
+
 ## [0.5.6](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.5...v0.5.6) (2026-02-24)
 
 ### Bug Fixes
