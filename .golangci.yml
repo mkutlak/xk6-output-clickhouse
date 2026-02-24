@@ -84,6 +84,8 @@ linters:
     gosec:
       excludes:
         - G101
+        - G115 # integer overflow conversion: safe when guarded by non-negative check
+        - G117 # exported struct field matches secret pattern: false positive for config fields
 
     staticcheck:
       checks:

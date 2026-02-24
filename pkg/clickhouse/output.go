@@ -355,7 +355,9 @@ func (o *Output) Stop() error {
 func (o *Output) GetErrorMetrics() ErrorMetrics {
 	var bufferedSamples uint64
 	if o.failoverBuffer != nil {
-		bufferedSamples = uint64(o.failoverBuffer.Len())
+		if n := o.failoverBuffer.Len(); n > 0 {
+			bufferedSamples = uint64(n)
+		}
 	}
 
 	return ErrorMetrics{
