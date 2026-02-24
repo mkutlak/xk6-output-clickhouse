@@ -1,3 +1,9 @@
+## [0.5.6](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.5...v0.5.6) (2026-02-24)
+
+### Bug Fixes
+
+* **clickhouse:** guard integer conversion and update lint rules ([25ac7ce](https://github.com/mkutlak/xk6-output-clickhouse/commit/25ac7ce4fad17c63e5ead89e357159a60b91c901))
+
 ## [0.5.5](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.4...v0.5.5) (2026-02-20)
 
 ### Bug Fixes
