@@ -151,7 +151,7 @@ jobs:
         run: sha256sum ./k6-${{ matrix.os }}-${{ matrix.arch }} > k6-${{ matrix.os }}-${{ matrix.arch }}.sha256
 
       - name: Attest binary
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: ./k6-${{ matrix.os }}-${{ matrix.arch }}
 
@@ -216,7 +216,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Attest Docker image
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/xk6-output-clickhouse
           subject-digest: ${{ steps.push.outputs.digest }}
