@@ -1,3 +1,9 @@
+## [0.5.8](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.7...v0.5.8) (2026-03-25)
+
+### Code Refactoring
+
+* improve CI/CD, stabilize tests, and optimize schema handling ([5859677](https://github.com/mkutlak/xk6-output-clickhouse/commit/5859677bcd4c39e6f68bc0fc5123f99f108beef4))
+
 ## [0.5.7](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.6...v0.5.7) (2026-02-24)
 
 ### Bug Fixes
