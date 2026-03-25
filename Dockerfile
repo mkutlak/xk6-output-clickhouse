@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine3.23 AS builder
 ARG TARGETOS
 ARG TARGETARCH
-ARG XK6_VERSION=v1.3.4
+ARG XK6_VERSION=latest
 ARG MODULE_NAME=github.com/mkutlak/xk6-output-clickhouse
 WORKDIR /build
 

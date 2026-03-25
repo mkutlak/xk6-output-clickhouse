@@ -1,8 +1,6 @@
 package clickhouse
 
 import (
-	"fmt"
-	"io"
 	"sync"
 	"testing"
 
@@ -11,52 +9,45 @@ import (
 	"go.k6.io/k6/metrics"
 )
 
-// mockSampleContainer implements metrics.SampleContainer for testing
-type mockSampleContainer struct {
-	samples []metrics.Sample
-}
-
-func (m *mockSampleContainer) GetSamples() []metrics.Sample {
-	return m.samples
-}
-
-func newMockContainer(id int) metrics.SampleContainer {
-	return &mockSampleContainer{
-		samples: []metrics.Sample{
-			{Value: float64(id)},
-		},
-	}
-}
-
 func TestNewSampleBuffer(t *testing.T) {
+	t.Parallel()
+
 	t.Run("default capacity", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(0, DropOldest)
 		assert.Equal(t, 10000, buf.Capacity())
 	})
 
 	t.Run("custom capacity", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(100, DropOldest)
 		assert.Equal(t, 100, buf.Capacity())
 	})
 
 	t.Run("default policy for invalid input", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(100, "invalid")
 		assert.Equal(t, DropOldest, buf.policy)
 	})
 
 	t.Run("drop oldest policy", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(100, DropOldest)
 		assert.Equal(t, DropOldest, buf.policy)
 	})
 
 	t.Run("drop newest policy", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(100, DropNewest)
 		assert.Equal(t, DropNewest, buf.policy)
 	})
 }
 
 func TestSampleBuffer_PushPop(t *testing.T) {
+	t.Parallel()
+
 	t.Run("push and pop single item", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(10, DropOldest)
 
 		samples := []metrics.SampleContainer{newMockContainer(1)}
@@ -71,6 +62,7 @@ func TestSampleBuffer_PushPop(t *testing.T) {
 	})
 
 	t.Run("push and pop multiple items", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(10, DropOldest)
 
 		samples := []metrics.SampleContainer{
@@ -89,6 +81,7 @@ func TestSampleBuffer_PushPop(t *testing.T) {
 	})
 
 	t.Run("pop from empty buffer", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(10, DropOldest)
 
 		result := buf.PopAll()
@@ -96,6 +89,7 @@ func TestSampleBuffer_PushPop(t *testing.T) {
 	})
 
 	t.Run("push empty slice", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(10, DropOldest)
 
 		dropped := buf.Push(nil)
@@ -108,6 +102,7 @@ func TestSampleBuffer_PushPop(t *testing.T) {
 	})
 
 	t.Run("FIFO order preserved", func(t *testing.T) {
+		t.Parallel()
 		buf := NewSampleBuffer(10, DropOldest)
 
 		for i := 1; i <= 5; i++ {
@@ -126,6 +121,7 @@ func TestSampleBuffer_PushPop(t *testing.T) {
 }
 
 func TestSampleBuffer_OverflowDropOldest(t *testing.T) {
+	t.Parallel()
 	buf := NewSampleBuffer(3, DropOldest)
 
 	// Fill buffer
@@ -155,6 +151,7 @@ func TestSampleBuffer_OverflowDropOldest(t *testing.T) {
 }
 
 func TestSampleBuffer_OverflowDropNewest(t *testing.T) {
+	t.Parallel()
 	buf := NewSampleBuffer(3, DropNewest)
 
 	// Fill buffer
@@ -184,6 +181,7 @@ func TestSampleBuffer_OverflowDropNewest(t *testing.T) {
 }
 
 func TestSampleBuffer_Reset(t *testing.T) {
+	t.Parallel()
 	buf := NewSampleBuffer(10, DropOldest)
 
 	buf.Push([]metrics.SampleContainer{
@@ -204,6 +202,7 @@ func TestSampleBuffer_Reset(t *testing.T) {
 }
 
 func TestSampleBuffer_Concurrency(t *testing.T) {
+	t.Parallel()
 	buf := NewSampleBuffer(1000, DropOldest)
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -233,6 +232,7 @@ func TestSampleBuffer_Concurrency(t *testing.T) {
 }
 
 func TestSampleBuffer_WrapAround(t *testing.T) {
+	t.Parallel()
 	buf := NewSampleBuffer(3, DropOldest)
 
 	// First fill
@@ -256,68 +256,4 @@ func TestSampleBuffer_WrapAround(t *testing.T) {
 	require.Len(t, result, 2)
 	assert.Equal(t, float64(4), result[0].GetSamples()[0].Value)
 	assert.Equal(t, float64(5), result[1].GetSamples()[0].Value)
-}
-
-func TestIsRetryableError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "connection refused",
-			err:      &mockError{msg: "dial tcp: connection refused"},
-			expected: true,
-		},
-		{
-			name:     "connection reset",
-			err:      &mockError{msg: "read: connection reset by peer"},
-			expected: true,
-		},
-		{
-			name:     "i/o timeout",
-			err:      &mockError{msg: "read: i/o timeout"},
-			expected: true,
-		},
-		{
-			name:     "broken pipe",
-			err:      &mockError{msg: "write: broken pipe"},
-			expected: true,
-		},
-		{
-			name:     "EOF",
-			err:      fmt.Errorf("read: %w", io.ErrUnexpectedEOF),
-			expected: true,
-		},
-		{
-			name:     "generic error",
-			err:      &mockError{msg: "some random error"},
-			expected: false,
-		},
-		{
-			name:     "conversion error",
-			err:      &mockError{msg: "failed to parse buildId"},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isRetryableError(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-type mockError struct {
-	msg string
-}
-
-func (e *mockError) Error() string {
-	return e.msg
 }

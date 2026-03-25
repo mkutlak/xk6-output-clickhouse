@@ -1,41 +1,23 @@
 package clickhouse
 
 import (
-	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
 )
 
-// Helper function to create params for tests
-func mustCreateParams(t *testing.T, config map[string]any) output.Params {
-	t.Helper()
-	data, err := json.Marshal(config)
-	require.NoError(t, err)
-	return output.Params{
-		JSONConfig: data,
-	}
-}
-
 func TestConcurrentAddMetricSamples(t *testing.T) {
 	t.Parallel()
 
-	params := mustCreateParams(t, map[string]any{
+	clickhouseOut := newTestOutput(t, map[string]any{
 		"addr":     "localhost:9000",
 		"database": "k6",
 		"table":    "samples",
 	})
-
-	out, err := New(params)
-	require.NoError(t, err)
-	require.NotNil(t, out)
-
-	clickhouseOut := out.(*Output)
 
 	numGoroutines := 10
 	samplesPerGoroutine := 100
@@ -68,8 +50,9 @@ func TestConcurrentAddMetricSamples(t *testing.T) {
 
 	wg.Wait()
 
+	// Exercise GetBufferedSamples under concurrent load; correctness is validated by the race detector.
 	buffered := clickhouseOut.GetBufferedSamples()
-	assert.GreaterOrEqual(t, len(buffered), 0, "Should have buffered samples or empty buffer")
+	_ = buffered
 }
 
 func TestConcurrentConvertToSimple(t *testing.T) {
@@ -190,7 +173,7 @@ func TestMemoryPoolConcurrentAccess(t *testing.T) {
 				m["key1"] = "value1"
 				m["key2"] = "value2"
 
-				clearMap(m)
+				clear(m)
 				tagMapPool.Put(m)
 			}()
 		}
@@ -267,14 +250,9 @@ func TestStartStopLifecycleConcurrency(t *testing.T) {
 	t.Run("multiple Stop calls are safe", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]any{
+		clickhouseOut := newTestOutput(t, map[string]any{
 			"addr": "localhost:9000",
 		})
-
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
 
 		var wg sync.WaitGroup
 		numStops := 10
@@ -294,14 +272,9 @@ func TestStartStopLifecycleConcurrency(t *testing.T) {
 	t.Run("Stop is safe during AddMetricSamples", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]any{
+		clickhouseOut := newTestOutput(t, map[string]any{
 			"addr": "localhost:9000",
 		})
-
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -335,71 +308,6 @@ func TestStartStopLifecycleConcurrency(t *testing.T) {
 	})
 }
 
-func TestConcurrentClearMap(t *testing.T) {
-	t.Parallel()
-
-	numGoroutines := 50
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	for range numGoroutines {
-		go func() {
-			defer wg.Done()
-
-			m := make(map[string]string)
-			m["key1"] = "value1"
-			m["key2"] = "value2"
-			m["key3"] = "value3"
-
-			clearMap(m)
-
-			assert.Equal(t, 0, len(m))
-		}()
-	}
-
-	wg.Wait()
-}
-
-func TestRaceConditions(t *testing.T) {
-	t.Parallel()
-
-	numGoroutines := 20
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	for i := range numGoroutines {
-		go func(id int) {
-			defer wg.Done()
-
-			registry := metrics.NewRegistry()
-			metric := registry.MustNewMetric("test_metric", metrics.Trend)
-			tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
-				"method": "GET",
-				"status": "200",
-			})
-
-			sample := metrics.Sample{
-				TimeSeries: metrics.TimeSeries{
-					Metric: metric,
-					Tags:   tags,
-				},
-				Time:  time.Now(),
-				Value: float64(id),
-			}
-
-			ss := convertToSimple(sample)
-			assert.NotNil(t, ss.Tags)
-
-			cs, err := convertToCompatible(sample, 12345)
-			assert.NoError(t, err)
-			assert.NotNil(t, cs.ExtraTags)
-		}(i)
-	}
-
-	wg.Wait()
-}
-
 // TestErrorMetrics_Concurrency consolidates concurrent error metrics tests
 func TestErrorMetrics_Concurrency(t *testing.T) {
 	t.Parallel()
@@ -407,14 +315,9 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 	t.Run("concurrent reads are safe", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]any{
+		clickhouseOut := newTestOutput(t, map[string]any{
 			"addr": "localhost:9000",
 		})
-
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
 
 		numGoroutines := 100
 		var wg sync.WaitGroup
@@ -438,14 +341,9 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 	t.Run("concurrent increments are atomic", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]any{
+		clickhouseOut := newTestOutput(t, map[string]any{
 			"addr": "localhost:9000",
 		})
-
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
 
 		numGoroutines := 50
 		incrementsPerGoroutine := 100
@@ -492,14 +390,9 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 	t.Run("concurrent reads and writes", func(t *testing.T) {
 		t.Parallel()
 
-		params := mustCreateParams(t, map[string]any{
+		clickhouseOut := newTestOutput(t, map[string]any{
 			"addr": "localhost:9000",
 		})
-
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
 
 		numWriters := 20
 		numReaders := 30
@@ -575,7 +468,7 @@ func BenchmarkConcurrentMemoryPool(b *testing.B) {
 		for pb.Next() {
 			m := tagMapPool.Get().(map[string]string)
 			m["key"] = "value"
-			clearMap(m)
+			clear(m)
 			tagMapPool.Put(m)
 		}
 	})
@@ -583,6 +476,7 @@ func BenchmarkConcurrentMemoryPool(b *testing.B) {
 
 func BenchmarkGetErrorMetrics(b *testing.B) {
 	params := output.Params{
+		Logger: newTestLogger(b),
 		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr": "localhost:9000",
 		}),
@@ -609,6 +503,7 @@ func BenchmarkGetErrorMetrics(b *testing.B) {
 
 func BenchmarkErrorCounterAdd(b *testing.B) {
 	params := output.Params{
+		Logger: newTestLogger(b),
 		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr": "localhost:9000",
 		}),

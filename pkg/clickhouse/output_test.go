@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.k6.io/k6/metrics"
@@ -28,6 +29,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid params with defaults",
 			params: output.Params{
+				Logger:         newTestLogger(t),
 				ConfigArgument: "",
 				JSONConfig:     nil,
 			},
@@ -36,6 +38,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid params with json config",
 			params: output.Params{
+				Logger: newTestLogger(t),
 				JSONConfig: mustMarshalJSON(map[string]any{
 					"addr":         "clickhouse:9000",
 					"database":     "metrics",
@@ -48,6 +51,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid params with url config",
 			params: output.Params{
+				Logger:         newTestLogger(t),
 				ConfigArgument: "localhost:9000?database=test&table=samples",
 			},
 			expectError: false,
@@ -55,6 +59,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "invalid json config",
 			params: output.Params{
+				Logger:     newTestLogger(t),
 				JSONConfig: []byte(`{invalid`),
 			},
 			expectError:   true,
@@ -63,6 +68,7 @@ func TestNew(t *testing.T) {
 		{
 			name: "invalid pushInterval in json",
 			params: output.Params{
+				Logger: newTestLogger(t),
 				JSONConfig: mustMarshalJSON(map[string]any{
 					"pushInterval": "not-a-duration",
 				}),
@@ -102,6 +108,7 @@ func TestNew_ConfigParsing(t *testing.T) {
 	t.Parallel()
 
 	params := output.Params{
+		Logger: newTestLogger(t),
 		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr":         "test-host:9000",
 			"database":     "test_db",
@@ -200,7 +207,7 @@ func TestOutput_Stop(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			params := output.Params{}
+			params := output.Params{Logger: newTestLogger(t)}
 			out, err := New(params)
 			require.NoError(t, err)
 
@@ -221,7 +228,7 @@ func TestOutput_Flush(t *testing.T) {
 	t.Run("flush with no samples", func(t *testing.T) {
 		t.Parallel()
 
-		params := output.Params{}
+		params := output.Params{Logger: newTestLogger(t)}
 		out, err := New(params)
 		require.NoError(t, err)
 
@@ -236,7 +243,7 @@ func TestOutput_Flush(t *testing.T) {
 	t.Run("flush with nil database", func(t *testing.T) {
 		t.Parallel()
 
-		params := output.Params{}
+		params := output.Params{Logger: newTestLogger(t)}
 		out, err := New(params)
 		require.NoError(t, err)
 
@@ -252,7 +259,7 @@ func TestOutput_Flush(t *testing.T) {
 	t.Run("flush with closed output", func(t *testing.T) {
 		t.Parallel()
 
-		params := output.Params{}
+		params := output.Params{Logger: newTestLogger(t)}
 		out, err := New(params)
 		require.NoError(t, err)
 
@@ -273,6 +280,7 @@ func TestOutput_Lifecycle(t *testing.T) {
 	t.Parallel()
 
 	params := output.Params{
+		Logger: newTestLogger(t),
 		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr":         "localhost:9000",
 			"pushInterval": "1s",
@@ -292,43 +300,25 @@ func TestOutput_Lifecycle(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestOutput_NilDatabase(t *testing.T) {
-	t.Parallel()
-
-	params := output.Params{}
-	out, err := New(params)
-	require.NoError(t, err)
-
-	clickhouseOut := out.(*Output)
-	clickhouseOut.db = nil
-
-	// Should not panic, but will fail to prepare statement
-	require.NotPanics(t, func() {
-		clickhouseOut.flush()
-	})
-}
-
 func TestOutput_ConfigurationValidation(t *testing.T) {
 	t.Parallel()
 
-	params := output.Params{
-		JSONConfig: mustMarshalJSON(map[string]any{
-			"addr":         "test-host:9000",
-			"database":     "test_db",
-			"table":        "test_table",
-			"pushInterval": "5s",
-		}),
-	}
+	clickhouseOut := newTestOutput(t, map[string]any{
+		"addr":         "test-host:9000",
+		"database":     "test_db",
+		"table":        "test_table",
+		"pushInterval": "5s",
+	})
 
-	out, err := New(params)
-	require.NoError(t, err)
-
-	clickhouseOut := out.(*Output)
-
+	assert.NotNil(t, clickhouseOut.logger)
 	assert.Equal(t, "test-host:9000", clickhouseOut.config.Addr)
 	assert.Equal(t, "test_db", clickhouseOut.config.Database)
 	assert.Equal(t, "test_table", clickhouseOut.config.Table)
 	assert.Equal(t, 5*time.Second, clickhouseOut.config.PushInterval)
+
+	// Stop should work even if Start was never called
+	err := clickhouseOut.Stop()
+	assert.NoError(t, err)
 }
 
 // Error metrics tests
@@ -336,7 +326,7 @@ func TestOutput_ConfigurationValidation(t *testing.T) {
 func TestOutput_GetErrorMetrics_Initial(t *testing.T) {
 	t.Parallel()
 
-	params := output.Params{}
+	params := output.Params{Logger: newTestLogger(t)}
 	out, err := New(params)
 	require.NoError(t, err)
 
@@ -365,7 +355,7 @@ func TestErrorMetrics_Values(t *testing.T) {
 func TestOutput_GetErrorMetrics_AfterStop(t *testing.T) {
 	t.Parallel()
 
-	params := output.Params{}
+	params := output.Params{Logger: newTestLogger(t)}
 	out, err := New(params)
 	require.NoError(t, err)
 
@@ -389,7 +379,7 @@ func TestOutput_GetErrorMetrics_AfterStop(t *testing.T) {
 func TestOutput_ErrorMetrics_AtomicOperations(t *testing.T) {
 	t.Parallel()
 
-	params := output.Params{}
+	params := output.Params{Logger: newTestLogger(t)}
 	out, err := New(params)
 	require.NoError(t, err)
 
@@ -427,6 +417,7 @@ func BenchmarkOutput_Description(b *testing.B) {
 
 func BenchmarkOutput_New(b *testing.B) {
 	params := output.Params{
+		Logger: newTestLogger(b),
 		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr":         "localhost:9000",
 			"database":     "k6",
@@ -454,7 +445,7 @@ func TestDoFlush_ReleaseAfterCommit(t *testing.T) {
 
 		// Create an Output with no database — doFlush should fail at BeginTx
 		// but this validates the pendingRows accumulator doesn't leak on error paths
-		params := output.Params{}
+		params := output.Params{Logger: newTestLogger(t)}
 		out, err := New(params)
 		require.NoError(t, err)
 
@@ -486,7 +477,7 @@ func TestStop_FinalFlushNotSkipped(t *testing.T) {
 	t.Run("flush is not blocked during stop sequence", func(t *testing.T) {
 		t.Parallel()
 
-		params := output.Params{}
+		params := output.Params{Logger: newTestLogger(t)}
 		out, err := New(params)
 		require.NoError(t, err)
 
@@ -521,7 +512,7 @@ func TestStop_FinalFlushNotSkipped(t *testing.T) {
 	t.Run("concurrent stop calls are safe with double-check lock", func(t *testing.T) {
 		t.Parallel()
 
-		params := output.Params{}
+		params := output.Params{Logger: newTestLogger(t)}
 		out, err := New(params)
 		require.NoError(t, err)
 
@@ -662,7 +653,7 @@ func TestIsRetryableError_CommitError(t *testing.T) {
 func TestFlush_OverlappingPrevented(t *testing.T) {
 	t.Parallel()
 
-	params := output.Params{}
+	params := output.Params{Logger: newTestLogger(t)}
 	out, err := New(params)
 	require.NoError(t, err)
 
@@ -686,6 +677,26 @@ func TestFlush_OverlappingPrevented(t *testing.T) {
 	}
 
 	clickhouseOut.flushMu.Unlock()
+}
+
+func TestNew_UsesParamsLogger(t *testing.T) {
+	t.Parallel()
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	params := output.Params{
+		Logger: l,
+	}
+	out, err := New(params)
+	require.NoError(t, err)
+	assert.NotNil(t, out.(*Output).logger)
+}
+
+func TestNew_FallbackLogger(t *testing.T) {
+	t.Parallel()
+	params := output.Params{}
+	out, err := New(params)
+	require.NoError(t, err)
+	assert.NotNil(t, out.(*Output).logger)
 }
 
 // mustMarshalJSON is defined in config_test.go

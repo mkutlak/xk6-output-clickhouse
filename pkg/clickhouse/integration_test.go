@@ -23,6 +23,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	CreateDatabase(t, endpoint, dbName)
 
 	params := output.Params{
+		Logger: newTestLogger(t),
 		JSONConfig: mustMarshalJSON(map[string]any{
 			"addr":         endpoint,
 			"user":         testUsername,
@@ -57,7 +58,7 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	}
 
 	out.AddMetricSamples([]metrics.SampleContainer{
-		testSampleContainer{
+		&mockSampleContainer{
 			samples: []metrics.Sample{sample},
 		},
 	})
@@ -84,12 +85,4 @@ func TestIntegration_ClickHouse(t *testing.T) {
 	assert.Equal(t, "test_metric", metricName)
 	assert.Equal(t, 123.45, metricValue)
 	assert.Equal(t, "value1", tags["tag1"])
-}
-
-type testSampleContainer struct {
-	samples []metrics.Sample
-}
-
-func (c testSampleContainer) GetSamples() []metrics.Sample {
-	return c.samples
 }

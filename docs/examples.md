@@ -35,8 +35,6 @@ export K6_CLICKHOUSE_PASSWORD=secret
 
 ## JSON Configuration
 
-You can define the configuration directly in your k6 script options:
-
 ```javascript
 export const options = {
   ext: {
@@ -67,8 +65,6 @@ export default function () {
 ```
 
 ## Grafana Integration
-
-Connect Grafana to ClickHouse to visualize your k6 metrics.
 
 ### Add ClickHouse Data Source
 
@@ -104,32 +100,19 @@ GROUP BY time
 ORDER BY time
 ```
 
-## Querying Metrics in ClickHouse
-
-### Basic Exploration
+## Querying Metrics
 
 ```sql
--- View recent metrics
 SELECT * FROM k6.samples ORDER BY timestamp DESC LIMIT 100;
-
--- Count metrics by name
 SELECT metric, count() AS cnt FROM k6.samples GROUP BY metric ORDER BY cnt DESC;
 ```
 
-### Using Tags (Simple Schema)
+### Filtering by Tags (Simple Schema)
 
 ```sql
--- Filter by a specific tag
-SELECT avg(value)
-FROM k6.samples
-WHERE metric = 'http_req_duration'
-  AND tags['method'] = 'GET';
+SELECT avg(value) FROM k6.samples
+WHERE metric = 'http_req_duration' AND tags['method'] = 'GET';
 
--- Group by tag
-SELECT
-    tags['status'] AS status,
-    count() AS count
-FROM k6.samples
-WHERE metric = 'http_reqs'
-GROUP BY status;
+SELECT tags['status'] AS status, count() AS count
+FROM k6.samples WHERE metric = 'http_reqs' GROUP BY status;
 ```

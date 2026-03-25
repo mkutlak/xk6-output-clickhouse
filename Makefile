@@ -4,7 +4,7 @@
 REPO_OWNER ?= mkutlak
 REPO_NAME ?= xk6-output-clickhouse
 EXTENSION_MODULE ?= github.com/$(REPO_OWNER)/$(REPO_NAME)
-XK6_VERSION ?= latest
+XK6_VERSION ?= $(shell cat .xk6-version 2>/dev/null || echo latest)
 
 # CI/CD variables
 IMAGE_NAME ?= ghcr.io/$(REPO_OWNER)/$(REPO_NAME)
@@ -76,7 +76,7 @@ clean:
 # Build Docker image
 docker-build:
 	@echo "Building Docker image..."
-	@docker build -t $(IMAGE_NAME):latest .
+	@docker build --build-arg XK6_VERSION=$(XK6_VERSION) -t $(IMAGE_NAME):latest .
 	@echo "Docker image built: $(IMAGE_NAME):latest"
 
 # Clean Docker image
@@ -104,8 +104,8 @@ docker-compose-logs:
 # Run k6 test with docker-compose
 docker-compose-test:
 	@echo "Building k6 image and running test..."
-	@docker compose build k6
-	@docker compose --profile test run --rm k6
+	@docker compose --profile test build k6-test
+	@docker compose --profile test run --rm k6-test
 	@echo "Test completed"
 
 # Start docker compose services for development (profile: dev)

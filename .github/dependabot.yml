@@ -4,8 +4,7 @@ updates:
   - package-ecosystem: gomod
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: "03:15"
     open-pull-requests-limit: 5
     labels:
@@ -23,8 +22,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: "03:15"
     open-pull-requests-limit: 5
     labels:
@@ -39,8 +37,7 @@ updates:
   - package-ecosystem: docker
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
       time: "03:15"
     open-pull-requests-limit: 5
     labels:

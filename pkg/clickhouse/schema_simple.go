@@ -91,7 +91,7 @@ type simpleSample struct {
 func convertToSimple(sample metrics.Sample) simpleSample {
 	// Get a reusable map from the pool to reduce allocations
 	tags := tagMapPool.Get().(map[string]string)
-	clearMap(tags) // Ensure map is clean before use
+	clear(tags)
 
 	ss := simpleSample{
 		Timestamp: sample.Time,

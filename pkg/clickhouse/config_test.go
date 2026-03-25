@@ -1,7 +1,6 @@
 package clickhouse
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -200,16 +199,6 @@ func TestParseConfig(t *testing.T) {
 
 func TestParseConfig_EdgeCases(t *testing.T) {
 	t.Parallel()
-
-	t.Run("nil params returns defaults", func(t *testing.T) {
-		t.Parallel()
-
-		cfg, err := ParseConfig(output.Params{})
-		require.NoError(t, err)
-
-		expected := NewConfig()
-		assert.Equal(t, expected, cfg)
-	})
 
 	t.Run("malformed url still processes json config", func(t *testing.T) {
 		t.Parallel()
@@ -424,13 +413,4 @@ func TestParseConfig_InvalidURLParams(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.errorContains)
 		})
 	}
-}
-
-// Helper function to marshal JSON for test cases
-func mustMarshalJSON(v any) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return data
 }

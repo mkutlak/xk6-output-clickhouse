@@ -75,6 +75,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        XK6_VERSION: ${XK6_VERSION:-latest}
     image: xk6-output-clickhouse:latest
     profiles:
       - manual

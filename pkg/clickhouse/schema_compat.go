@@ -159,7 +159,7 @@ type compatibleSample struct {
 func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatibleSample, error) {
 	// Get a reusable map from the pool to reduce allocations
 	extraTags := tagMapPool.Get().(map[string]string)
-	clearMap(extraTags) // Ensure map is clean before use
+	clear(extraTags)
 
 	cs := compatibleSample{
 		Timestamp:        sample.Time,
@@ -172,8 +172,9 @@ func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatib
 
 	// Extract and map tags to columns
 	if sample.Tags != nil {
-		tagMap := make(map[string]string, len(sample.Tags.Map()))
-		maps.Copy(tagMap, sample.Tags.Map())
+		srcTags := sample.Tags.Map()
+		tagMap := make(map[string]string, len(srcTags))
+		maps.Copy(tagMap, srcTags)
 
 		// TestID (with aliases)
 		if testID, ok := getAndDelete(tagMap, "testid"); ok {

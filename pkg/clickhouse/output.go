@@ -14,10 +14,9 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/avast/retry-go/v4"
+	"github.com/sirupsen/logrus"
 	"go.k6.io/k6/metrics"
 	"go.k6.io/k6/output"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // Memory pools for reducing allocations during high-throughput operations
@@ -47,14 +46,6 @@ var (
 	}
 )
 
-// clearMap efficiently clears a map while retaining its allocated capacity
-// This avoids map reallocations when the map is reused from the pool
-func clearMap(m map[string]string) {
-	for k := range m {
-		delete(m, k)
-	}
-}
-
 // commitError wraps errors that occur during batch.Commit().
 // Commit errors are ambiguous: the server may have persisted the data before the
 // response was lost. To avoid duplication, these errors are NOT retried.
@@ -72,7 +63,7 @@ func escapeIdentifier(name string) string {
 type Output struct {
 	output.SampleBuffer
 	config          Config
-	logger          *zap.Logger
+	logger          logrus.FieldLogger
 	db              *sql.DB
 	periodicFlusher *output.PeriodicFlusher
 	insertQuery     string // Pre-computed INSERT query
@@ -143,17 +134,14 @@ func New(params output.Params) (output.Output, error) {
 		return nil, err
 	}
 
-	// Create production logger with ISO 8601 timestamps
-	logCfg := zap.NewProductionConfig()
-	logCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	logger, err := logCfg.Build()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create logger: %w", err)
+	logger := params.Logger
+	if logger == nil {
+		logger = logrus.New()
 	}
 
 	return &Output{
 		config: cfg,
-		logger: logger.With(zap.String("output", "clickhouse")),
+		logger: logger.WithField("output", "clickhouse"),
 	}, nil
 }
 
@@ -225,7 +213,7 @@ func (o *Output) Start() error {
 	}
 	o.schema = impl.Schema
 	o.converter = impl.Converter
-	o.logger.Debug("Using schema implementation", zap.String("schemaMode", o.config.SchemaMode))
+	o.logger.WithField("schemaMode", o.config.SchemaMode).Debug("Using schema implementation")
 
 	// Create schema if not skipped
 	if !o.config.SkipSchemaCreation {
@@ -246,9 +234,10 @@ func (o *Output) Start() error {
 			o.config.BufferMaxSamples,
 			DropPolicy(o.config.BufferDropPolicy),
 		)
-		o.logger.Debug("Failover buffer initialized",
-			zap.Int("capacity", o.config.BufferMaxSamples),
-			zap.String("dropPolicy", o.config.BufferDropPolicy))
+		o.logger.WithFields(logrus.Fields{
+			"capacity":   o.config.BufferMaxSamples,
+			"dropPolicy": o.config.BufferDropPolicy,
+		}).Debug("Failover buffer initialized")
 	}
 
 	// Start periodic flusher
@@ -258,11 +247,12 @@ func (o *Output) Start() error {
 	}
 	o.periodicFlusher = pf
 
-	o.logger.Debug("Started",
-		zap.Duration("interval", o.config.PushInterval),
-		zap.Uint("retryAttempts", o.config.RetryAttempts),
-		zap.Duration("retryDelay", o.config.RetryDelay),
-		zap.Bool("bufferEnabled", o.config.BufferEnabled))
+	o.logger.WithFields(logrus.Fields{
+		"interval":      o.config.PushInterval,
+		"retryAttempts": o.config.RetryAttempts,
+		"retryDelay":    o.config.RetryDelay,
+		"bufferEnabled": o.config.BufferEnabled,
+	}).Debug("Started")
 	return nil
 }
 
@@ -304,8 +294,7 @@ func (o *Output) Stop() error {
 	// Final attempt to drain failover buffer before shutdown
 	if o.failoverBuffer != nil && o.failoverBuffer.Len() > 0 {
 		bufferedCount := o.failoverBuffer.Len()
-		o.logger.Info("Draining failover buffer on shutdown",
-			zap.Int("bufferedSamples", bufferedCount))
+		o.logger.WithField("bufferedSamples", bufferedCount).Info("Draining failover buffer on shutdown")
 
 		// Use a fresh context for final drain (don't use cancelled shutdown context)
 		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -314,12 +303,9 @@ func (o *Output) Stop() error {
 		samples := o.failoverBuffer.PopAll()
 		if len(samples) > 0 {
 			if err := o.doFlush(drainCtx, samples); err != nil {
-				o.logger.Warn("Failed to drain buffer on shutdown, data may be lost",
-					zap.Int("lostSamples", len(samples)),
-					zap.Error(err))
+				o.logger.WithError(err).WithField("lostSamples", len(samples)).Warn("Failed to drain buffer on shutdown, data may be lost")
 			} else {
-				o.logger.Info("Successfully drained failover buffer",
-					zap.Int("flushedSamples", len(samples)))
+				o.logger.WithField("flushedSamples", len(samples)).Info("Successfully drained failover buffer")
 			}
 		}
 	}
@@ -339,13 +325,14 @@ func (o *Output) Stop() error {
 
 	// Log final metrics
 	errStats := o.GetErrorMetrics()
-	o.logger.Info("ClickHouse output stopped",
-		zap.Uint64("samplesProcessed", errStats.SamplesProcessed),
-		zap.Uint64("convertErrors", errStats.ConvertErrors),
-		zap.Uint64("insertErrors", errStats.InsertErrors),
-		zap.Uint64("retryAttempts", errStats.RetryAttempts),
-		zap.Uint64("flushFailures", errStats.FlushFailures),
-		zap.Uint64("droppedSamples", errStats.DroppedSamples))
+	o.logger.WithFields(logrus.Fields{
+		"samplesProcessed": errStats.SamplesProcessed,
+		"convertErrors":    errStats.ConvertErrors,
+		"insertErrors":     errStats.InsertErrors,
+		"retryAttempts":    errStats.RetryAttempts,
+		"flushFailures":    errStats.FlushFailures,
+		"droppedSamples":   errStats.DroppedSamples,
+	}).Info("ClickHouse output stopped")
 
 	return nil
 }
@@ -464,8 +451,7 @@ func (o *Output) flush() {
 	if o.failoverBuffer != nil {
 		bufferedSamples := o.failoverBuffer.PopAll()
 		if len(bufferedSamples) > 0 {
-			logger.Debug("Recovered samples from failover buffer",
-				zap.Int("count", len(bufferedSamples)))
+			logger.WithField("count", len(bufferedSamples)).Debug("Recovered samples from failover buffer")
 			samples = append(bufferedSamples, samples...)
 		}
 	}
@@ -488,27 +474,23 @@ func (o *Output) flush() {
 		retry.Context(ctx),
 		retry.OnRetry(func(n uint, err error) {
 			o.retryAttempts.Add(1)
-			logger.Warn("Flush failed, retrying",
-				zap.Uint("attempt", n+1),
-				zap.Uint("maxAttempts", retryAttempts),
-				zap.Error(err))
+			logger.WithError(err).WithFields(logrus.Fields{
+				"attempt":     n + 1,
+				"maxAttempts": retryAttempts,
+			}).Warn("Flush failed, retrying")
 		}),
 		retry.RetryIf(isRetryableError),
 	)
 
 	if err != nil {
 		o.flushFailures.Add(1)
-		logger.Error("Flush failed after retries",
-			zap.Error(err),
-			zap.Duration("elapsed", time.Since(start)))
+		logger.WithError(err).WithField("elapsed", time.Since(start)).Error("Flush failed after retries")
 
 		// Commit errors are ambiguous — data may already be persisted.
 		// Do NOT buffer these samples to avoid duplication on next flush.
 		var ce *commitError
 		if errors.As(err, &ce) {
-			logger.Warn("Commit error (data may already be persisted), not buffering samples",
-				zap.Int("samples", len(samples)),
-				zap.Error(err))
+			logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error (data may already be persisted), not buffering samples")
 			return
 		}
 
@@ -517,17 +499,18 @@ func (o *Output) flush() {
 			dropped := o.failoverBuffer.Push(samples)
 			if dropped > 0 {
 				o.droppedSamples.Add(uint64(dropped))
-				logger.Warn("Buffer overflow, dropped samples",
-					zap.Int("dropped", dropped),
-					zap.Int("buffered", o.failoverBuffer.Len()))
+				logger.WithFields(logrus.Fields{
+					"dropped":  dropped,
+					"buffered": o.failoverBuffer.Len(),
+				}).Warn("Buffer overflow, dropped samples")
 			} else {
-				logger.Info("Samples buffered for retry",
-					zap.Int("count", len(samples)),
-					zap.Int("bufferSize", o.failoverBuffer.Len()))
+				logger.WithFields(logrus.Fields{
+					"count":      len(samples),
+					"bufferSize": o.failoverBuffer.Len(),
+				}).Info("Samples buffered for retry")
 			}
 		} else {
-			logger.Error("Samples lost (buffering disabled)",
-				zap.Int("lostSamples", len(samples)))
+			logger.WithField("lostSamples", len(samples)).Error("Samples lost (buffering disabled)")
 		}
 	}
 }
@@ -562,7 +545,7 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 	}
 	defer func() {
 		if rollbackErr := batch.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
-			logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+			logger.WithError(rollbackErr).Warn("Failed to rollback transaction")
 		}
 	}()
 
@@ -572,15 +555,21 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 	}
 	defer func() {
 		if closeErr := stmt.Close(); closeErr != nil {
-			logger.Warn("failed to close statement", zap.Error(closeErr))
+			logger.WithError(closeErr).Warn("Failed to close statement")
 		}
 	}()
 
 	count := 0
 	totalSamples := 0
 
-	// Track conversion errors within this flush operation
+	// Track conversion errors within this flush operation.
+	// Deferred so every return path (including context cancellation) flushes the counter.
 	var flushConvertErrors uint64
+	defer func() {
+		if flushConvertErrors > 0 {
+			o.convertErrors.Add(flushConvertErrors)
+		}
+	}()
 
 	// Calculate total samples for progress tracking
 	for _, container := range samples {
@@ -612,7 +601,7 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 			row, convErr := converter.Convert(ctx, sample)
 			if convErr != nil {
 				flushConvertErrors++
-				logger.Error("failed to convert sample", zap.Error(convErr))
+				logger.WithError(convErr).Warn("Failed to convert sample")
 				continue
 			}
 
@@ -622,9 +611,6 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 			if execErr != nil {
 				converter.Release(row) // Driver discards failed rows, safe to release
 				o.insertErrors.Add(1)
-				if flushConvertErrors > 0 {
-					o.convertErrors.Add(flushConvertErrors)
-				}
 				return fmt.Errorf("failed to insert sample: %w", execErr)
 			}
 			pendingRows = append(pendingRows, row)
@@ -636,10 +622,10 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 	// Conversion errors are deterministic — retrying won't help.
 	if count == 0 {
 		if flushConvertErrors > 0 {
-			o.convertErrors.Add(flushConvertErrors)
-			logger.Warn("All samples failed conversion, skipping commit",
-				zap.Uint64("convertErrors", flushConvertErrors),
-				zap.Int("totalSamples", totalSamples))
+			logger.WithFields(logrus.Fields{
+				"convertErrors": flushConvertErrors,
+				"totalSamples":  totalSamples,
+			}).Warn("All samples failed conversion, skipping commit")
 		}
 		return nil
 	}
@@ -648,30 +634,25 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 		// Commit errors are ambiguous: data may already be persisted server-side.
 		// Optimistically count samples as processed and wrap as commitError
 		// so retry logic does NOT re-insert (avoiding duplication).
-		if flushConvertErrors > 0 {
-			o.convertErrors.Add(flushConvertErrors)
-		}
 		o.samplesProcessed.Add(uint64(count))
 		return &commitError{err: err}
 	}
 
-	// Update cumulative atomic counters
-	if flushConvertErrors > 0 {
-		o.convertErrors.Add(flushConvertErrors)
-	}
 	o.samplesProcessed.Add(uint64(count))
 
 	// Log summary
 	if flushConvertErrors > 0 {
-		logger.Warn("Flush completed with conversion errors",
-			zap.Uint64("convertErrors", flushConvertErrors),
-			zap.Int("successfulInserts", count),
-			zap.Int("totalSamples", totalSamples),
-			zap.Duration("elapsed", time.Since(start)))
+		logger.WithFields(logrus.Fields{
+			"convertErrors":     flushConvertErrors,
+			"successfulInserts": count,
+			"totalSamples":      totalSamples,
+			"elapsed":           time.Since(start),
+		}).Warn("Flush completed with conversion errors")
 	} else {
-		logger.Debug("Flushed metrics",
-			zap.Int("samples", count),
-			zap.Duration("elapsed", time.Since(start)))
+		logger.WithFields(logrus.Fields{
+			"samples": count,
+			"elapsed": time.Since(start),
+		}).Debug("Flushed metrics")
 	}
 
 	return nil

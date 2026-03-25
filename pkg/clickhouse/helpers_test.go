@@ -2,13 +2,18 @@ package clickhouse
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2"
+	clickhouse_go "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	clickhouseModule "github.com/testcontainers/testcontainers-go/modules/clickhouse"
+	"go.k6.io/k6/metrics"
+	"go.k6.io/k6/output"
 )
 
 // Test constants for ClickHouse container configuration.
@@ -19,6 +24,56 @@ const (
 	testDatabase         = "default"
 	testContainerTimeout = 2 * time.Minute
 )
+
+// mockSampleContainer implements metrics.SampleContainer for testing.
+type mockSampleContainer struct {
+	samples []metrics.Sample
+}
+
+func (m *mockSampleContainer) GetSamples() []metrics.Sample {
+	return m.samples
+}
+
+func newMockContainer(id int) metrics.SampleContainer {
+	return &mockSampleContainer{
+		samples: []metrics.Sample{
+			{Value: float64(id)},
+		},
+	}
+}
+
+// newTestLogger creates a logrus logger for testing that discards output.
+func newTestLogger(t testing.TB) logrus.FieldLogger {
+	t.Helper()
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	l.SetLevel(logrus.DebugLevel)
+	return l
+}
+
+// newTestOutput creates an *Output for testing with optional JSON config.
+func newTestOutput(t testing.TB, config ...map[string]any) *Output {
+	t.Helper()
+	var jsonConfig json.RawMessage
+	if len(config) > 0 {
+		jsonConfig = mustMarshalJSON(config[0])
+	}
+	out, err := New(output.Params{
+		Logger:     newTestLogger(t),
+		JSONConfig: jsonConfig,
+	})
+	require.NoError(t, err)
+	return out.(*Output)
+}
+
+// mustMarshalJSON marshals v to JSON or panics.
+func mustMarshalJSON(v any) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
 
 // StartClickHouseContainer starts a ClickHouse container for testing.
 // Returns the endpoint address (host:port) and a cleanup function.
@@ -60,9 +115,9 @@ func StartClickHouseContainer(t *testing.T) (endpoint string, cleanup func()) {
 func CreateDatabase(t *testing.T, endpoint, dbName string) {
 	t.Helper()
 
-	conn, err := clickhouse.Open(&clickhouse.Options{
+	conn, err := clickhouse_go.Open(&clickhouse_go.Options{
 		Addr: []string{endpoint},
-		Auth: clickhouse.Auth{
+		Auth: clickhouse_go.Auth{
 			Database: testDatabase,
 			Username: testUsername,
 			Password: testPassword,
@@ -73,17 +128,4 @@ func CreateDatabase(t *testing.T, endpoint, dbName string) {
 	err = conn.Exec(context.Background(), fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", dbName))
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
-}
-
-// GetTestConfig returns a valid config pointing to the given endpoint.
-func GetTestConfig(endpoint string) Config {
-	return Config{
-		Addr:         endpoint,
-		Database:     "k6",
-		Table:        "samples",
-		User:         testUsername,
-		Password:     testPassword,
-		PushInterval: 100 * time.Millisecond, // 100ms for fast tests
-		SchemaMode:   "simple",
-	}
 }

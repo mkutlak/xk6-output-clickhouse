@@ -91,22 +91,6 @@ func TestRegistration(t *testing.T) {
 	})
 }
 
-// TestRegistrationInitialization tests that init() doesn't panic
-func TestRegistrationInitialization(t *testing.T) {
-	t.Parallel()
-
-	t.Run("package initialization succeeds", func(t *testing.T) {
-		t.Parallel()
-
-		// This test verifies that the package can be imported and initialized
-		// without panicking. The init() function registers the extension.
-		assert.NotPanics(t, func() {
-			// Just accessing the package-level items verifies init() ran
-			_ = clickhouse.New
-		})
-	})
-}
-
 // TestRegistrationWithVariousConfigs tests the registered function with various configs
 func TestRegistrationWithVariousConfigs(t *testing.T) {
 	t.Parallel()

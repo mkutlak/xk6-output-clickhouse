@@ -12,13 +12,17 @@ import (
 	"go.k6.io/k6/metrics"
 )
 
-// Simple Schema Tests
-
-func TestSimpleSchema_InvalidIdentifiers(t *testing.T) {
+// TestSchema_InvalidIdentifiers consolidates identifier validation tests for both schemas.
+func TestSchema_InvalidIdentifiers(t *testing.T) {
 	t.Parallel()
 
-	schema := SimpleSchema{}
-	ctx := context.Background()
+	schemas := []struct {
+		name   string
+		schema SchemaCreator
+	}{
+		{"simple", &SimpleSchema{}},
+		{"compatible", &CompatibleSchema{}},
+	}
 
 	tests := []struct {
 		name          string
@@ -52,52 +56,68 @@ func TestSimpleSchema_InvalidIdentifiers(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	ctx := context.Background()
 
-			err := schema.CreateSchema(ctx, &sql.DB{}, tt.database, tt.table)
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tt.errorContains)
-		})
+	for _, s := range schemas {
+		for _, tt := range tests {
+			t.Run(s.name+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				err := s.schema.CreateSchema(ctx, &sql.DB{}, tt.database, tt.table)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorContains)
+			})
+		}
 	}
 }
 
-func TestSimpleSchema_InsertQuery(t *testing.T) {
+// TestSchema_InsertQuery consolidates insert query tests for both schemas.
+func TestSchema_InsertQuery(t *testing.T) {
 	t.Parallel()
 
-	schema := SimpleSchema{}
+	schemas := []struct {
+		name            string
+		schema          interface{ InsertQuery(string, string) string }
+		expectedColumns []string
+	}{
+		{
+			name:            "simple",
+			schema:          &SimpleSchema{},
+			expectedColumns: []string{"timestamp", "metric", "value", "tags"},
+		},
+		{
+			name:   "compatible",
+			schema: &CompatibleSchema{},
+			expectedColumns: []string{
+				"timestamp", "metric", "metric_type", "value",
+				"testid", "release", "scenario", "build_id", "extra_tags",
+			},
+		},
+	}
 
-	tests := []struct {
+	nameCases := []struct {
 		name     string
 		database string
 		table    string
 	}{
-		{
-			name:     "default configuration",
-			database: "k6",
-			table:    "samples",
-		},
-		{
-			name:     "custom names",
-			database: "production",
-			table:    "metrics",
-		},
+		{"default configuration", "k6", "samples"},
+		{"custom names", "production", "metrics"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	for _, s := range schemas {
+		for _, tt := range nameCases {
+			t.Run(s.name+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
 
-			query := schema.InsertQuery(tt.database, tt.table)
+				query := s.schema.InsertQuery(tt.database, tt.table)
 
-			assert.Contains(t, query, "INSERT INTO")
-			assert.Contains(t, query, fmt.Sprintf("`%s`.`%s`", tt.database, tt.table))
-			assert.Contains(t, query, "timestamp")
-			assert.Contains(t, query, "metric")
-			assert.Contains(t, query, "value")
-			assert.Contains(t, query, "tags")
-		})
+				assert.Contains(t, query, "INSERT INTO")
+				assert.Contains(t, query, fmt.Sprintf("`%s`.`%s`", tt.database, tt.table))
+				for _, col := range s.expectedColumns {
+					assert.Contains(t, query, col)
+				}
+			})
+		}
 	}
 }
 
@@ -223,100 +243,6 @@ func TestSimpleConverter_Convert(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "GET", tagsMap["method"])
 	assert.Equal(t, "200", tagsMap["status"])
-}
-
-// Compatible Schema Tests
-
-func TestCompatibleSchema_InvalidIdentifiers(t *testing.T) {
-	t.Parallel()
-
-	schema := CompatibleSchema{}
-	ctx := context.Background()
-
-	tests := []struct {
-		name          string
-		database      string
-		table         string
-		errorContains string
-	}{
-		{
-			name:          "database name with special characters",
-			database:      "k6'; DROP TABLE samples; --",
-			table:         "samples",
-			errorContains: "invalid database name",
-		},
-		{
-			name:          "table name with special characters",
-			database:      "k6",
-			table:         "samples'; DROP DATABASE k6; --",
-			errorContains: "invalid table name",
-		},
-		{
-			name:          "empty database name",
-			database:      "",
-			table:         "samples",
-			errorContains: "invalid database name",
-		},
-		{
-			name:          "empty table name",
-			database:      "k6",
-			table:         "",
-			errorContains: "invalid table name",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := schema.CreateSchema(ctx, &sql.DB{}, tt.database, tt.table)
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tt.errorContains)
-		})
-	}
-}
-
-func TestCompatibleSchema_InsertQuery(t *testing.T) {
-	t.Parallel()
-
-	schema := CompatibleSchema{}
-
-	tests := []struct {
-		name     string
-		database string
-		table    string
-	}{
-		{
-			name:     "default configuration",
-			database: "k6",
-			table:    "samples",
-		},
-		{
-			name:     "custom names",
-			database: "production",
-			table:    "metrics",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			query := schema.InsertQuery(tt.database, tt.table)
-
-			assert.Contains(t, query, "INSERT INTO")
-			assert.Contains(t, query, fmt.Sprintf("`%s`.`%s`", tt.database, tt.table))
-			assert.Contains(t, query, "timestamp")
-			assert.Contains(t, query, "metric")
-			assert.Contains(t, query, "metric_type")
-			assert.Contains(t, query, "value")
-			assert.Contains(t, query, "testid")
-			assert.Contains(t, query, "release")
-			assert.Contains(t, query, "scenario")
-			assert.Contains(t, query, "build_id")
-			assert.Contains(t, query, "extra_tags")
-		})
-	}
 }
 
 func TestConvertToCompatible(t *testing.T) {

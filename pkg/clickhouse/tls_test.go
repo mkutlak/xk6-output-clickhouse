@@ -17,15 +17,33 @@ import (
 	"go.k6.io/k6/output"
 )
 
-// createTempCACert creates a temporary CA certificate file for testing
-func createTempCACert(t *testing.T) string {
-	t.Helper()
+var (
+	testTLSDir     string
+	testCACertFile string
+	testClientCert string
+	testClientKey  string
+)
 
-	// Generate private key
+func TestMain(m *testing.M) {
+	var err error
+	testTLSDir, err = os.MkdirTemp("", "tls-test-*")
+	if err != nil {
+		panic(err)
+	}
+	testCACertFile = generateCACert(testTLSDir)
+	testClientCert, testClientKey = generateClientCert(testTLSDir)
+	code := m.Run()
+	_ = os.RemoveAll(testTLSDir)
+	os.Exit(code)
+}
+
+// generateCACert creates a CA certificate file in dir and returns its path.
+func generateCACert(dir string) string {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
+	if err != nil {
+		panic(err)
+	}
 
-	// Create certificate template
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
@@ -39,31 +57,32 @@ func createTempCACert(t *testing.T) string {
 		IsCA:                  true,
 	}
 
-	// Create self-signed certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	require.NoError(t, err)
+	if err != nil {
+		panic(err)
+	}
 
-	// Write certificate to temp file
-	certFile := filepath.Join(t.TempDir(), "ca.pem")
+	certFile := filepath.Join(dir, "ca.pem")
 	f, err := os.Create(certFile)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, f.Close()) }()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = f.Close() }()
 
-	err = pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	require.NoError(t, err)
+	if err := pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		panic(err)
+	}
 
 	return certFile
 }
 
-// createTempClientCert creates temporary client certificate and key files for testing
-func createTempClientCert(t *testing.T) (certFile, keyFile string) {
-	t.Helper()
-
-	// Generate private key
+// generateClientCert creates client certificate and key files in dir and returns their paths.
+func generateClientCert(dir string) (certFile, keyFile string) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
+	if err != nil {
+		panic(err)
+	}
 
-	// Create certificate template
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
@@ -75,28 +94,33 @@ func createTempClientCert(t *testing.T) (certFile, keyFile string) {
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	// Create self-signed certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	require.NoError(t, err)
+	if err != nil {
+		panic(err)
+	}
 
-	// Write certificate to temp file
-	certFile = filepath.Join(t.TempDir(), "client-cert.pem")
+	certFile = filepath.Join(dir, "client-cert.pem")
 	cf, err := os.Create(certFile)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, cf.Close()) }()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = cf.Close() }()
 
-	err = pem.Encode(cf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	require.NoError(t, err)
+	if err := pem.Encode(cf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		panic(err)
+	}
 
-	// Write private key to temp file
-	keyFile = filepath.Join(t.TempDir(), "client-key.pem")
+	keyFile = filepath.Join(dir, "client-key.pem")
 	kf, err := os.Create(keyFile)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, kf.Close()) }()
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = kf.Close() }()
 
 	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
-	err = pem.Encode(kf, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privateKeyBytes})
-	require.NoError(t, err)
+	if err := pem.Encode(kf, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privateKeyBytes}); err != nil {
+		panic(err)
+	}
 
 	return certFile, keyFile
 }
@@ -132,11 +156,9 @@ func TestTLSConfig_BuildTLSConfig_EnabledWithSystemCA(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_WithCustomCA(t *testing.T) {
 	t.Parallel()
 
-	caFile := createTempCACert(t)
-
 	tlsConfig := TLSConfig{
 		Enabled: true,
-		CAFile:  caFile,
+		CAFile:  testCACertFile,
 	}
 
 	result, err := tlsConfig.BuildTLSConfig()
@@ -150,12 +172,10 @@ func TestTLSConfig_BuildTLSConfig_WithCustomCA(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_WithClientCertificate(t *testing.T) {
 	t.Parallel()
 
-	certFile, keyFile := createTempClientCert(t)
-
 	tlsConfig := TLSConfig{
 		Enabled:  true,
-		CertFile: certFile,
-		KeyFile:  keyFile,
+		CertFile: testClientCert,
+		KeyFile:  testClientKey,
 	}
 
 	result, err := tlsConfig.BuildTLSConfig()
@@ -232,12 +252,10 @@ func TestTLSConfig_BuildTLSConfig_InvalidCAContent(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_InvalidClientCert(t *testing.T) {
 	t.Parallel()
 
-	_, keyFile := createTempClientCert(t)
-
 	tlsConfig := TLSConfig{
 		Enabled:  true,
 		CertFile: "/nonexistent/cert.pem",
-		KeyFile:  keyFile,
+		KeyFile:  testClientKey,
 	}
 
 	result, err := tlsConfig.BuildTLSConfig()
@@ -249,11 +267,9 @@ func TestTLSConfig_BuildTLSConfig_InvalidClientCert(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_InvalidClientKey(t *testing.T) {
 	t.Parallel()
 
-	certFile, _ := createTempClientCert(t)
-
 	tlsConfig := TLSConfig{
 		Enabled:  true,
-		CertFile: certFile,
+		CertFile: testClientCert,
 		KeyFile:  "/nonexistent/key.pem",
 	}
 
@@ -266,15 +282,12 @@ func TestTLSConfig_BuildTLSConfig_InvalidClientKey(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_CompleteConfiguration(t *testing.T) {
 	t.Parallel()
 
-	caFile := createTempCACert(t)
-	certFile, keyFile := createTempClientCert(t)
-
 	tlsConfig := TLSConfig{
 		Enabled:            true,
 		InsecureSkipVerify: false,
-		CAFile:             caFile,
-		CertFile:           certFile,
-		KeyFile:            keyFile,
+		CAFile:             testCACertFile,
+		CertFile:           testClientCert,
+		KeyFile:            testClientKey,
 		ServerName:         "clickhouse.example.com",
 	}
 
@@ -367,17 +380,14 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 	t.Run("TLS with all options in JSON", func(t *testing.T) {
 		t.Parallel()
 
-		caFile := createTempCACert(t)
-		certFile, keyFile := createTempClientCert(t)
-
 		params := output.Params{
 			JSONConfig: mustMarshalJSON(map[string]any{
 				"tls": map[string]any{
 					"enabled":            true,
 					"insecureSkipVerify": true,
-					"caFile":             caFile,
-					"certFile":           certFile,
-					"keyFile":            keyFile,
+					"caFile":             testCACertFile,
+					"certFile":           testClientCert,
+					"keyFile":            testClientKey,
 					"serverName":         "clickhouse.example.com",
 				},
 			}),
@@ -387,9 +397,9 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 		assert.True(t, cfg.TLS.InsecureSkipVerify)
-		assert.Equal(t, caFile, cfg.TLS.CAFile)
-		assert.Equal(t, certFile, cfg.TLS.CertFile)
-		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
+		assert.Equal(t, testCACertFile, cfg.TLS.CAFile)
+		assert.Equal(t, testClientCert, cfg.TLS.CertFile)
+		assert.Equal(t, testClientKey, cfg.TLS.KeyFile)
 		assert.Equal(t, "clickhouse.example.com", cfg.TLS.ServerName)
 	})
 }
@@ -434,13 +444,11 @@ func TestParseConfig_TLS_Environment(t *testing.T) {
 	})
 
 	t.Run("TLS with all options via ENV", func(t *testing.T) {
-		caFile := createTempCACert(t)
-		certFile, keyFile := createTempClientCert(t)
 		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
 		t.Setenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY", "false")
-		t.Setenv("K6_CLICKHOUSE_TLS_CA_FILE", caFile)
-		t.Setenv("K6_CLICKHOUSE_TLS_CERT_FILE", certFile)
-		t.Setenv("K6_CLICKHOUSE_TLS_KEY_FILE", keyFile)
+		t.Setenv("K6_CLICKHOUSE_TLS_CA_FILE", testCACertFile)
+		t.Setenv("K6_CLICKHOUSE_TLS_CERT_FILE", testClientCert)
+		t.Setenv("K6_CLICKHOUSE_TLS_KEY_FILE", testClientKey)
 		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "clickhouse.local")
 
 		params := output.Params{}
@@ -448,9 +456,9 @@ func TestParseConfig_TLS_Environment(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 		assert.False(t, cfg.TLS.InsecureSkipVerify)
-		assert.Equal(t, caFile, cfg.TLS.CAFile)
-		assert.Equal(t, certFile, cfg.TLS.CertFile)
-		assert.Equal(t, keyFile, cfg.TLS.KeyFile)
+		assert.Equal(t, testCACertFile, cfg.TLS.CAFile)
+		assert.Equal(t, testClientCert, cfg.TLS.CertFile)
+		assert.Equal(t, testClientKey, cfg.TLS.KeyFile)
 		assert.Equal(t, "clickhouse.local", cfg.TLS.ServerName)
 	})
 }
@@ -502,11 +510,9 @@ func TestConfig_Validate_TLSConfiguration(t *testing.T) {
 	t.Run("TLS with valid CA file passes validation", func(t *testing.T) {
 		t.Parallel()
 
-		caFile := createTempCACert(t)
-
 		cfg := NewConfig()
 		cfg.TLS.Enabled = true
-		cfg.TLS.CAFile = caFile
+		cfg.TLS.CAFile = testCACertFile
 
 		err := cfg.Validate()
 		assert.NoError(t, err)
@@ -527,12 +533,10 @@ func TestConfig_Validate_TLSConfiguration(t *testing.T) {
 	t.Run("TLS with valid client certificate passes validation", func(t *testing.T) {
 		t.Parallel()
 
-		certFile, keyFile := createTempClientCert(t)
-
 		cfg := NewConfig()
 		cfg.TLS.Enabled = true
-		cfg.TLS.CertFile = certFile
-		cfg.TLS.KeyFile = keyFile
+		cfg.TLS.CertFile = testClientCert
+		cfg.TLS.KeyFile = testClientKey
 
 		err := cfg.Validate()
 		assert.NoError(t, err)
@@ -541,11 +545,9 @@ func TestConfig_Validate_TLSConfiguration(t *testing.T) {
 	t.Run("TLS with cert but no key fails validation", func(t *testing.T) {
 		t.Parallel()
 
-		certFile, _ := createTempClientCert(t)
-
 		cfg := NewConfig()
 		cfg.TLS.Enabled = true
-		cfg.TLS.CertFile = certFile
+		cfg.TLS.CertFile = testClientCert
 
 		err := cfg.Validate()
 		assert.Error(t, err)
@@ -555,11 +557,9 @@ func TestConfig_Validate_TLSConfiguration(t *testing.T) {
 	t.Run("TLS with key but no cert fails validation", func(t *testing.T) {
 		t.Parallel()
 
-		_, keyFile := createTempClientCert(t)
-
 		cfg := NewConfig()
 		cfg.TLS.Enabled = true
-		cfg.TLS.KeyFile = keyFile
+		cfg.TLS.KeyFile = testClientKey
 
 		err := cfg.Validate()
 		assert.Error(t, err)

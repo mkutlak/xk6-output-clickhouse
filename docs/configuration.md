@@ -15,14 +15,14 @@ Highest to lowest:
 
 | Option | Environment Variable | URL Param | Default          | Description                                       |
 | ------ | -------------------- | --------- | ---------------- | ------------------------------------------------- |
-| `addr` | `K6_CLICKHOUSE_ADDR` | (in URL)  | `localhost:9000` | ClickHouse server address (use port 9440 for TLS) |
+| `addr` | `K6_CLICKHOUSE_ADDR` | (in URL)  | `localhost:9000` | ClickHouse server address |
+| `user` | `K6_CLICKHOUSE_USER` | `user` | `default` | Database username |
+| `password` | `K6_CLICKHOUSE_PASSWORD` | `password` | `""` | Database password |
+| `database` | `K6_CLICKHOUSE_DB` | `database` | `k6` | Database name |
+| `table` | `K6_CLICKHOUSE_TABLE` | `table` | `samples` | Table name |
+| `pushInterval` | `K6_CLICKHOUSE_PUSH_INTERVAL` | `pushInterval` | `1s` | Flush interval (e.g., "1s", "500ms") |
 
-> **Note**: If TLS is enabled, it is recommended to use port `9440` (the default port for secure native protocol) instead of `9000`.
-> | `user` | `K6_CLICKHOUSE_USER` | `user` | `default` | Database username |
-> | `password` | `K6_CLICKHOUSE_PASSWORD` | `password` | `""` | Database password |
-> | `database` | `K6_CLICKHOUSE_DB` | `database` | `k6` | Database name |
-> | `table` | `K6_CLICKHOUSE_TABLE` | `table` | `samples` | Table name |
-> | `pushInterval` | `K6_CLICKHOUSE_PUSH_INTERVAL` | `pushInterval` | `1s` | Flush interval (e.g., "1s", "500ms") |
+> **Note**: With TLS enabled, use port `9440` instead of `9000`.
 
 ## Schema Options
 
@@ -39,7 +39,7 @@ Highest to lowest:
 | `retryDelay`    | `K6_CLICKHOUSE_RETRY_DELAY`     | `retryDelay`    | `100ms` | Initial delay between retries     |
 | `retryMaxDelay` | `K6_CLICKHOUSE_RETRY_MAX_DELAY` | `retryMaxDelay` | `5s`    | Maximum delay cap                 |
 
-Retries use exponential backoff: `100ms -> 200ms -> 400ms -> ... (capped at 5s)`
+Uses exponential backoff, capped at `retryMaxDelay`.
 
 ## Buffer Options
 

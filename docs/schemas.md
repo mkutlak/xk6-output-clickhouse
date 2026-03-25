@@ -17,11 +17,7 @@ PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (metric, timestamp)
 ```
 
-**Characteristics:**
-
-- 4 columns, simple structure.
-- All tags stored in `Map` column.
-- Query tags with `tags['name']` syntax.
+All tags stored in a `Map` column — query with `tags['name']` syntax.
 
 ## Compatible Schema
 
@@ -57,12 +53,7 @@ TTL toDateTime(timestamp) + INTERVAL 365 DAY DELETE
 SETTINGS index_granularity = 8192
 ```
 
-**Characteristics:**
-
-- 21 columns with typed fields.
-- Known tags extracted to dedicated columns.
-- Compression codecs for better storage.
-- 365-day TTL for automatic cleanup.
+Known tags extracted to typed columns with compression codecs. 365-day TTL for automatic cleanup.
 
 ## Schema Comparison
 
@@ -81,9 +72,9 @@ To use the compatible schema, set `schemaMode=compatible`:
 ./k6 run --out "clickhouse=localhost:9000?schemaMode=compatible" script.js
 ```
 
-## Custom Schema Implementation
+## Custom Schema
 
-You can create your own schema by implementing the `SchemaCreator` and `SampleConverter` interfaces.
+Implement the `SchemaCreator` and `SampleConverter` interfaces:
 
 ```go
 // SchemaCreator manages table schema
@@ -100,9 +91,7 @@ type SampleConverter interface {
 }
 ```
 
-### Registration
-
-Register your custom schema in an `init()` function:
+Register in an `init()` function:
 
 ```go
 func init() {

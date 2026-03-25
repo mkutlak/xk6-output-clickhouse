@@ -1,3 +1,9 @@
+# Job graph:
+#   validate (reusable) ──┐
+#     ├─ lint              │
+#     └─ test              ├── (all must pass)
+#   build-check ──────────┘
+#   integration-tests ────┘
 name: CI
 
 on:
@@ -9,6 +15,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/ci.yaml'
+      - '.github/workflows/validate.yaml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,50 +32,7 @@ defaults:
 jobs:
   validate:
     name: Code Validation
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25.x"
-          cache: true
-
-      - name: Check code formatting
-        run: |
-          output=$(gofmt -l .)
-          if [ -n "$output" ]; then
-            echo "Code formatting issues found in:"
-            echo "$output"
-            echo "Run 'go fmt ./...'"
-            exit 1
-          fi
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          args: --timeout=5m
-
-      - name: Check go mod tidy
-        run: |
-          go mod tidy
-          if ! git diff --quiet go.mod go.sum; then
-            echo "go.mod or go.sum not tidy. Run 'go mod tidy'"
-            exit 1
-          fi
-
-      - name: Run unit tests with race detection
-        run: go test -v -race -timeout 5m ./...
+    uses: ./.github/workflows/validate.yaml
 
   build-check:
     name: Build Verification
@@ -87,7 +52,9 @@ jobs:
           cache: true
 
       - name: Install xk6
-        run: go install go.k6.io/xk6/cmd/xk6@latest
+        run: |
+          XK6_VERSION=$(cat .xk6-version 2>/dev/null || echo latest)
+          go install go.k6.io/xk6/cmd/xk6@${XK6_VERSION}
 
       - name: Build k6 with extension
         run: |
