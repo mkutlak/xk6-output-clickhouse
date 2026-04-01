@@ -3,7 +3,7 @@ module github.com/mkutlak/xk6-output-clickhouse
 go 1.25.3
 
 require (
-	github.com/ClickHouse/clickhouse-go/v2 v2.43.0
+	github.com/ClickHouse/clickhouse-go/v2 v2.44.0
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.11.1
