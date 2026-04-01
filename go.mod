@@ -8,7 +8,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.41.0
-	go.k6.io/k6 v1.7.0
+	go.k6.io/k6 v1.7.1
 )
 
 require (
