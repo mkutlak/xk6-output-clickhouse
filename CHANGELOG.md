@@ -1,3 +1,13 @@
+## [0.6.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.9...v0.6.0) (2026-05-17)
+
+### Features
+
+* migrate to k6 v2.0.0 ([9f85e13](https://github.com/mkutlak/xk6-output-clickhouse/commit/9f85e13f095adcfbef769b9a1e9aaaa97f728b68))
+
+### Documentation
+
+* restructure CLAUDE.md and fix doc/config inconsistencies ([91abf2c](https://github.com/mkutlak/xk6-output-clickhouse/commit/91abf2cc824d5a0cb4d8814b105d8752db3ae498))
+
 ## [0.5.9](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.8...v0.5.9) (2026-05-17)
 
 ### Bug Fixes
