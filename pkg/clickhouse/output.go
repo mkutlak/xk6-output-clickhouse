@@ -367,8 +367,7 @@ func isRetryableError(err error) bool {
 	}
 
 	// Commit errors are never retryable — the server may have already persisted data
-	var ce *commitError
-	if errors.As(err, &ce) {
+	if _, ok := errors.AsType[*commitError](err); ok {
 		return false
 	}
 
@@ -378,8 +377,7 @@ func isRetryableError(err error) bool {
 	}
 
 	// Check for network errors (connection refused, timeout, etc.)
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
 
@@ -488,8 +486,7 @@ func (o *Output) flush() {
 
 		// Commit errors are ambiguous — data may already be persisted.
 		// Do NOT buffer these samples to avoid duplication on next flush.
-		var ce *commitError
-		if errors.As(err, &ce) {
+		if _, ok := errors.AsType[*commitError](err); ok {
 			logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error (data may already be persisted), not buffering samples")
 			return
 		}

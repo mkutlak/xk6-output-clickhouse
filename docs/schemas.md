@@ -69,7 +69,7 @@ Known tags extracted to typed columns with compression codecs. 365-day TTL for a
 To use the compatible schema, set `schemaMode=compatible`:
 
 ```bash
-./k6 run --out "clickhouse=localhost:9000?schemaMode=compatible" script.js
+./k6 run --out "xk6-clickhouse=localhost:9000?schemaMode=compatible" script.js
 ```
 
 ## Custom Schema

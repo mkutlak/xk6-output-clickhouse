@@ -7,8 +7,8 @@ xk6-output-clickhouse can be configured via environment variables, URL parameter
 Highest to lowest:
 
 1. Environment variables (`K6_CLICKHOUSE_*`)
-2. URL parameters (e.g., `--out clickhouse=...?param=value`)
-3. JSON configuration (`options.ext.clickhouse`)
+2. URL parameters (e.g., `--out xk6-clickhouse=...?param=value`)
+3. JSON config file (`collectors.xk6-clickhouse` section, passed via `--config`)
 4. Default values
 
 ## Connection Options

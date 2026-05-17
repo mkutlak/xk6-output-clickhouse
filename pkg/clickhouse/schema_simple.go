@@ -134,5 +134,5 @@ func (c SimpleConverter) Release(row []any) {
 		}
 	}
 	// Return row buffer to pool
-	simpleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
+	simpleRowPool.Put(row) //nolint:staticcheck // SA6002: pooling a []any boxes the slice header into 'any' (one alloc per Put); accepted to keep the SampleConverter interface stable
 }

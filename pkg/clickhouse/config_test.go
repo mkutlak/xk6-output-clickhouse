@@ -118,6 +118,54 @@ func TestParseConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "bare host:port argument sets addr",
+			params: output.Params{
+				ConfigArgument: "clickhouse-server:9000",
+			},
+			expectedConfig: Config{
+				Addr:         "clickhouse-server:9000",
+				Database:     "k6",
+				Table:        "samples",
+				PushInterval: 1 * time.Second,
+			},
+		},
+		{
+			name: "bare ip:port argument sets addr",
+			params: output.Params{
+				ConfigArgument: "192.168.1.1:9000",
+			},
+			expectedConfig: Config{
+				Addr:         "192.168.1.1:9000",
+				Database:     "k6",
+				Table:        "samples",
+				PushInterval: 1 * time.Second,
+			},
+		},
+		{
+			name: "bare ipv6:port argument sets addr",
+			params: output.Params{
+				ConfigArgument: "[::1]:9000",
+			},
+			expectedConfig: Config{
+				Addr:         "[::1]:9000",
+				Database:     "k6",
+				Table:        "samples",
+				PushInterval: 1 * time.Second,
+			},
+		},
+		{
+			name: "bare host:port argument with query params",
+			params: output.Params{
+				ConfigArgument: "db-host:9000?database=mydb&table=mytable",
+			},
+			expectedConfig: Config{
+				Addr:         "db-host:9000",
+				Database:     "mydb",
+				Table:        "mytable",
+				PushInterval: 1 * time.Second,
+			},
+		},
+		{
 			name: "json config with zero pushInterval",
 			params: output.Params{
 				JSONConfig: mustMarshalJSON(map[string]any{
@@ -166,7 +214,7 @@ func TestParseConfig(t *testing.T) {
 				ConfigArgument: "url-host:9000?database=url_db&table=url_table",
 			},
 			expectedConfig: Config{
-				Addr:         "json-host:9000",
+				Addr:         "url-host:9000",
 				Database:     "url_db",
 				Table:        "url_table",
 				PushInterval: 5 * time.Second,
@@ -200,7 +248,7 @@ func TestParseConfig(t *testing.T) {
 func TestParseConfig_EdgeCases(t *testing.T) {
 	t.Parallel()
 
-	t.Run("malformed url still processes json config", func(t *testing.T) {
+	t.Run("malformed url config argument returns an error", func(t *testing.T) {
 		t.Parallel()
 
 		params := output.Params{
@@ -210,9 +258,9 @@ func TestParseConfig_EdgeCases(t *testing.T) {
 			ConfigArgument: "://invalid-url",
 		}
 
-		cfg, err := ParseConfig(params)
-		require.NoError(t, err)
-		assert.Equal(t, "json-configured:9000", cfg.Addr)
+		_, err := ParseConfig(params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid clickhouse config argument")
 	})
 }
 

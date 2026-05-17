@@ -5,7 +5,7 @@
 Run a k6 test with ClickHouse output using the default settings:
 
 ```bash
-./k6 run --out clickhouse=localhost:9000 script.js
+./k6 run --out xk6-clickhouse=localhost:9000 script.js
 ```
 
 ## Advanced Examples
@@ -13,13 +13,13 @@ Run a k6 test with ClickHouse output using the default settings:
 ### With Custom Database and Table
 
 ```bash
-./k6 run --out "clickhouse=localhost:9000?database=perf_tests&table=results" script.js
+./k6 run --out "xk6-clickhouse=localhost:9000?database=perf_tests&table=results" script.js
 ```
 
 ### With Authentication
 
 ```bash
-./k6 run --out "clickhouse=localhost:9000?user=k6user&password=secret" script.js
+./k6 run --out "xk6-clickhouse=localhost:9000?user=k6user&password=secret" script.js
 ```
 
 ### Using Environment Variables
@@ -30,38 +30,40 @@ export K6_CLICKHOUSE_DB=k6_metrics
 export K6_CLICKHOUSE_TLS_ENABLED=true
 export K6_CLICKHOUSE_USER=k6user
 export K6_CLICKHOUSE_PASSWORD=secret
-./k6 run --out clickhouse script.js
+./k6 run --out xk6-clickhouse script.js
 ```
 
 ## JSON Configuration
 
-```javascript
-export const options = {
-  ext: {
-    clickhouse: {
-      addr: "clickhouse.example.com:9440",
-      user: "k6user",
-      password: "secret",
-      database: "k6_tests",
-      table: "metrics",
-      pushInterval: "1s",
-      schemaMode: "simple",
-      bufferEnabled: true,
-      tls: {
-        enabled: true,
-        caFile: "/path/to/ca.pem",
-      },
-    },
-  },
-};
+For richer configuration, put the settings in a k6 JSON config file under a
+`collectors` entry keyed by the output name (`xk6-clickhouse`), then pass the
+file with `--config`:
 
-import http from "k6/http";
-import { sleep } from "k6";
+`k6-config.json`:
 
-export default function () {
-  http.get("https://test.k6.io");
-  sleep(1);
+```json
+{
+  "collectors": {
+    "xk6-clickhouse": {
+      "addr": "clickhouse.example.com:9440",
+      "user": "k6user",
+      "password": "secret",
+      "database": "k6_tests",
+      "table": "metrics",
+      "pushInterval": "1s",
+      "schemaMode": "simple",
+      "bufferEnabled": true,
+      "tls": {
+        "enabled": true,
+        "caFile": "/path/to/ca.pem"
+      }
+    }
+  }
 }
+```
+
+```bash
+./k6 run --config k6-config.json --out xk6-clickhouse script.js
 ```
 
 ## Grafana Integration

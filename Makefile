@@ -1,4 +1,4 @@
-.PHONY: build clean test test-coverage fmt lint vet tidy check install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-compose-test docker-dev docker-test docker-ci docker-clean-all release-binaries docker-build-multi docker-push docker-tag checksums help all
+.PHONY: build clean test test-coverage fmt lint vet modernize tidy check install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-compose-test docker-dev docker-test docker-ci docker-clean-all release-binaries docker-build-multi docker-push docker-tag checksums help all
 
 # Project variables
 REPO_OWNER ?= mkutlak
@@ -49,6 +49,11 @@ lint:
 vet:
 	@echo "Running go vet..."
 	@go vet ./...
+
+# Apply Go modernizers (go fix)
+modernize:
+	@echo "Applying Go modernizers..."
+	@go fix ./...
 
 # Tidy dependencies
 tidy:
@@ -193,6 +198,7 @@ help:
 	@echo "  make fmt                  - Format code"
 	@echo "  make lint                 - Run golangci-lint"
 	@echo "  make vet                  - Run go vet"
+	@echo "  make modernize            - Apply Go modernizers (go fix)"
 	@echo "  make tidy                 - Tidy go.mod and go.sum"
 	@echo "  make update               - Update dependencies to latest versions"
 	@echo "  make check                - Run all checks (fmt, vet, tidy, test)"

@@ -48,7 +48,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.3"
           cache: true
 
       - name: Install xk6
@@ -84,7 +84,7 @@ jobs:
 
       - name: Run integration tests
         env:
-          CLICKHOUSE_VERSION: 25.12-alpine
+          CLICKHOUSE_VERSION: 26.3-alpine
           HEALTHCHECK_INTERVAL: 3s
         run: make docker-ci
         timeout-minutes: 10

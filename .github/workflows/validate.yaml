@@ -32,7 +32,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.3"
           cache: true
 
       - name: Check code formatting
@@ -47,6 +47,9 @@ jobs:
 
       - name: Run go vet
         run: go vet ./...
+
+      - name: Check go modernization
+        run: go fix -diff ./...
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -76,7 +79,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.3"
           cache: true
 
       - name: Run unit tests with race detection

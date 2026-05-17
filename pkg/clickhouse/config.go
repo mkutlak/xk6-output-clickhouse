@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.k6.io/k6/output"
@@ -408,63 +409,74 @@ func ParseConfig(params output.Params) (Config, error) {
 		}
 	}
 
-	// Parse URL config if provided (--out clickhouse=addr?database=foo)
-	if params.ConfigArgument != "" {
-		u, err := url.Parse(params.ConfigArgument)
-		if err == nil {
-			if u.Host != "" {
-				cfg.Addr = u.Host
-			} else if u.Path != "" {
-				cfg.Addr = u.Path
+	// Parse the config argument (--out clickhouse=addr or addr?param=value).
+	if arg := params.ConfigArgument; arg != "" {
+		// A bare "host:port" is not a URL — url.Parse would misread the host as a
+		// scheme. Only parse as a URL when a scheme ("://") is present; otherwise
+		// treat the argument as a raw address with an optional "?query" suffix.
+		addr, rawQuery := arg, ""
+		if strings.Contains(arg, "://") {
+			u, err := url.Parse(arg)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid clickhouse config argument %q: %w", arg, err)
 			}
+			addr, rawQuery = u.Host, u.RawQuery
+		} else if before, after, found := strings.Cut(arg, "?"); found {
+			addr, rawQuery = before, after
+		}
+		if addr != "" {
+			cfg.Addr = addr
+		}
 
-			q := u.Query()
-			if user := q.Get("user"); user != "" {
-				cfg.User = user
-			}
-			if password := q.Get("password"); password != "" {
-				cfg.Password = password
-			}
-			if db := q.Get("database"); db != "" {
-				cfg.Database = db
-			}
-			if table := q.Get("table"); table != "" {
-				cfg.Table = table
-			}
-			if schemaMode := q.Get("schemaMode"); schemaMode != "" {
-				cfg.SchemaMode = schemaMode
-			}
-			if skipSchema := q.Get("skipSchemaCreation"); skipSchema != "" {
-				cfg.SkipSchemaCreation = skipSchema == "true"
-			}
+		q, err := url.ParseQuery(rawQuery)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid clickhouse config argument query %q: %w", arg, err)
+		}
+		if user := q.Get("user"); user != "" {
+			cfg.User = user
+		}
+		if password := q.Get("password"); password != "" {
+			cfg.Password = password
+		}
+		if db := q.Get("database"); db != "" {
+			cfg.Database = db
+		}
+		if table := q.Get("table"); table != "" {
+			cfg.Table = table
+		}
+		if schemaMode := q.Get("schemaMode"); schemaMode != "" {
+			cfg.SchemaMode = schemaMode
+		}
+		if skipSchema := q.Get("skipSchemaCreation"); skipSchema != "" {
+			cfg.SkipSchemaCreation = skipSchema == "true"
+		}
 
-			// Parse TLS URL parameters
-			if tlsEnabled := q.Get("tlsEnabled"); tlsEnabled != "" {
-				enabled, err := strconv.ParseBool(tlsEnabled)
-				if err != nil {
-					return cfg, fmt.Errorf("invalid tlsEnabled URL parameter value %q: %w", tlsEnabled, err)
-				}
-				cfg.TLS.Enabled = enabled
+		// Parse TLS URL parameters
+		if tlsEnabled := q.Get("tlsEnabled"); tlsEnabled != "" {
+			enabled, err := strconv.ParseBool(tlsEnabled)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid tlsEnabled URL parameter value %q: %w", tlsEnabled, err)
 			}
-			if tlsInsecure := q.Get("tlsInsecureSkipVerify"); tlsInsecure != "" {
-				insecure, err := strconv.ParseBool(tlsInsecure)
-				if err != nil {
-					return cfg, fmt.Errorf("invalid tlsInsecureSkipVerify URL parameter value %q: %w", tlsInsecure, err)
-				}
-				cfg.TLS.InsecureSkipVerify = insecure
+			cfg.TLS.Enabled = enabled
+		}
+		if tlsInsecure := q.Get("tlsInsecureSkipVerify"); tlsInsecure != "" {
+			insecure, err := strconv.ParseBool(tlsInsecure)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid tlsInsecureSkipVerify URL parameter value %q: %w", tlsInsecure, err)
 			}
-			if tlsCAFile := q.Get("tlsCAFile"); tlsCAFile != "" {
-				cfg.TLS.CAFile = tlsCAFile
-			}
-			if tlsCertFile := q.Get("tlsCertFile"); tlsCertFile != "" {
-				cfg.TLS.CertFile = tlsCertFile
-			}
-			if tlsKeyFile := q.Get("tlsKeyFile"); tlsKeyFile != "" {
-				cfg.TLS.KeyFile = tlsKeyFile
-			}
-			if tlsServerName := q.Get("tlsServerName"); tlsServerName != "" {
-				cfg.TLS.ServerName = tlsServerName
-			}
+			cfg.TLS.InsecureSkipVerify = insecure
+		}
+		if tlsCAFile := q.Get("tlsCAFile"); tlsCAFile != "" {
+			cfg.TLS.CAFile = tlsCAFile
+		}
+		if tlsCertFile := q.Get("tlsCertFile"); tlsCertFile != "" {
+			cfg.TLS.CertFile = tlsCertFile
+		}
+		if tlsKeyFile := q.Get("tlsKeyFile"); tlsKeyFile != "" {
+			cfg.TLS.KeyFile = tlsKeyFile
+		}
+		if tlsServerName := q.Get("tlsServerName"); tlsServerName != "" {
+			cfg.TLS.ServerName = tlsServerName
 		}
 	}
 

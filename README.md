@@ -1,7 +1,7 @@
 # xk6-output-clickhouse
 
 [![Build](https://github.com/mkutlak/xk6-output-clickhouse/actions/workflows/main.yaml/badge.svg)](https://github.com/mkutlak/xk6-output-clickhouse/actions/workflows/main.yaml)
-[![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/go-1.26+-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 A [k6](https://k6.io) extension for outputting load test metrics to [ClickHouse](https://clickhouse.com/).
@@ -30,7 +30,7 @@ xk6 build --with github.com/mkutlak/xk6-output-clickhouse@latest
 docker run -d --name clickhouse -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-server
 
 # Run k6
-./k6 run --out clickhouse=localhost:9000 script.js
+./k6 run --out xk6-clickhouse=localhost:9000 script.js
 ```
 
 ## Documentation
