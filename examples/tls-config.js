@@ -126,7 +126,7 @@ export default function () {
 // export K6_CLICKHOUSE_TLS_CERT_FILE=/path/to/client-cert.pem
 // export K6_CLICKHOUSE_TLS_KEY_FILE=/path/to/client-key.pem
 // export K6_CLICKHOUSE_TLS_SERVER_NAME=clickhouse.example.com
-// ./k6 run --out clickhouse script.js
+// ./k6 run --out xk6-clickhouse script.js
 
 // Alternative: Using Command Line Parameters
-// ./k6 run --out clickhouse=clickhouse.example.com:9440?tlsEnabled=true&tlsCAFile=/path/to/ca.pem script.js
+// ./k6 run --out xk6-clickhouse=clickhouse.example.com:9440?tlsEnabled=true&tlsCAFile=/path/to/ca.pem script.js

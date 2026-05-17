@@ -81,7 +81,6 @@ Implement the `SchemaCreator` and `SampleConverter` interfaces:
 type SchemaCreator interface {
     CreateSchema(ctx context.Context, db *sql.DB, database, table string) error
     InsertQuery(database, table string) string
-    ColumnCount() int
 }
 
 // SampleConverter converts k6 samples to rows

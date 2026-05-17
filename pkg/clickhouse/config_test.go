@@ -448,6 +448,36 @@ func TestParseConfig_InvalidURLParams(t *testing.T) {
 			urlParam:      "localhost:9000?tlsInsecureSkipVerify=nah",
 			errorContains: "invalid tlsInsecureSkipVerify URL parameter",
 		},
+		{
+			name:          "invalid pushInterval URL param",
+			urlParam:      "localhost:9000?pushInterval=not-a-duration",
+			errorContains: "invalid pushInterval URL parameter value",
+		},
+		{
+			name:          "invalid retryAttempts URL param",
+			urlParam:      "localhost:9000?retryAttempts=abc",
+			errorContains: "invalid retryAttempts URL parameter value",
+		},
+		{
+			name:          "invalid retryDelay URL param",
+			urlParam:      "localhost:9000?retryDelay=not-a-duration",
+			errorContains: "invalid retryDelay URL parameter value",
+		},
+		{
+			name:          "invalid retryMaxDelay URL param",
+			urlParam:      "localhost:9000?retryMaxDelay=xyz",
+			errorContains: "invalid retryMaxDelay URL parameter value",
+		},
+		{
+			name:          "invalid bufferEnabled URL param",
+			urlParam:      "localhost:9000?bufferEnabled=maybe",
+			errorContains: "invalid bufferEnabled URL parameter value",
+		},
+		{
+			name:          "invalid bufferMaxSamples URL param",
+			urlParam:      "localhost:9000?bufferMaxSamples=lots",
+			errorContains: "invalid bufferMaxSamples URL parameter value",
+		},
 	}
 
 	for _, tt := range tests {
@@ -461,4 +491,76 @@ func TestParseConfig_InvalidURLParams(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.errorContains)
 		})
 	}
+}
+
+// TestParseConfig_PushIntervalEnvVar verifies K6_CLICKHOUSE_PUSH_INTERVAL is parsed from env.
+func TestParseConfig_PushIntervalEnvVar(t *testing.T) {
+	// NOT parallel: t.Setenv modifies process environment
+
+	t.Run("valid push interval env var", func(t *testing.T) {
+		t.Setenv("K6_CLICKHOUSE_PUSH_INTERVAL", "5s")
+
+		cfg, err := ParseConfig(output.Params{})
+		require.NoError(t, err)
+		assert.Equal(t, 5*time.Second, cfg.PushInterval)
+	})
+
+	t.Run("invalid push interval env var returns error", func(t *testing.T) {
+		t.Setenv("K6_CLICKHOUSE_PUSH_INTERVAL", "not-a-duration")
+
+		_, err := ParseConfig(output.Params{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid K6_CLICKHOUSE_PUSH_INTERVAL")
+	})
+}
+
+// TestParseConfig_PushIntervalURLParam verifies pushInterval is parsed from URL query params.
+func TestParseConfig_PushIntervalURLParam(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseConfig(output.Params{
+		ConfigArgument: "localhost:9000?pushInterval=2s",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Second, cfg.PushInterval)
+}
+
+// TestParseConfig_RetryURLParams verifies retryAttempts/retryDelay/retryMaxDelay URL params.
+func TestParseConfig_RetryURLParams(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseConfig(output.Params{
+		ConfigArgument: "localhost:9000?retryAttempts=5&retryDelay=200ms&retryMaxDelay=10s",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint(5), cfg.RetryAttempts)
+	assert.Equal(t, 200*time.Millisecond, cfg.RetryDelay)
+	assert.Equal(t, 10*time.Second, cfg.RetryMaxDelay)
+}
+
+// TestParseConfig_BufferURLParams verifies bufferEnabled/bufferMaxSamples/bufferDropPolicy URL params.
+func TestParseConfig_BufferURLParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("buffer enabled with custom max samples and drop policy", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := ParseConfig(output.Params{
+			ConfigArgument: "localhost:9000?bufferEnabled=true&bufferMaxSamples=5000&bufferDropPolicy=newest",
+		})
+		require.NoError(t, err)
+		assert.True(t, cfg.BufferEnabled)
+		assert.Equal(t, 5000, cfg.BufferMaxSamples)
+		assert.Equal(t, "newest", cfg.BufferDropPolicy)
+	})
+
+	t.Run("buffer disabled via URL param", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := ParseConfig(output.Params{
+			ConfigArgument: "localhost:9000?bufferEnabled=false",
+		})
+		require.NoError(t, err)
+		assert.False(t, cfg.BufferEnabled)
+	})
 }

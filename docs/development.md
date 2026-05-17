@@ -4,7 +4,7 @@
 
 ### Prerequisites
 
-- [Go](https://go.dev/) 1.25+
+- [Go](https://go.dev/) 1.26+
 - [xk6](https://github.com/grafana/xk6)
 - Docker (for ClickHouse)
 

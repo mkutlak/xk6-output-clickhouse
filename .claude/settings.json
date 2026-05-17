@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make build:*)",
+      "Bash(make test:*)",
+      "Bash(make test-coverage:*)",
+      "Bash(make lint:*)",
+      "Bash(make vet:*)",
+      "Bash(make fmt:*)",
+      "Bash(make check:*)",
+      "Bash(make modernize:*)",
+      "Bash(make tidy:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go doc:*)",
+      "Bash(golangci-lint run:*)"
+    ]
+  }
+}

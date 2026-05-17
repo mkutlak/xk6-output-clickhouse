@@ -1,6 +1,6 @@
 # Configuration
 
-xk6-output-clickhouse can be configured via environment variables, URL parameters, or JSON configuration in your k6 script.
+xk6-output-clickhouse can be configured via environment variables, URL parameters, or a JSON config file.
 
 ## Priority Order
 

@@ -71,8 +71,8 @@ type TLSConfig struct {
 //
 // Configuration sources (in priority order):
 //  1. Environment variables (K6_CLICKHOUSE_*)
-//  2. URL parameters (e.g. --out clickhouse=...?param=value)
-//  3. JSON config (in script options)
+//  2. URL parameters (e.g. --out xk6-clickhouse=...?param=value)
+//  3. JSON config file (collectors.xk6-clickhouse, via --config)
 //  4. Default values
 type Config struct {
 	// Addr is the ClickHouse server address (host:port).
@@ -409,7 +409,7 @@ func ParseConfig(params output.Params) (Config, error) {
 		}
 	}
 
-	// Parse the config argument (--out clickhouse=addr or addr?param=value).
+	// Parse the config argument (--out xk6-clickhouse=addr or addr?param=value).
 	if arg := params.ConfigArgument; arg != "" {
 		// A bare "host:port" is not a URL — url.Parse would misread the host as a
 		// scheme. Only parse as a URL when a scheme ("://") is present; otherwise
@@ -443,6 +443,13 @@ func ParseConfig(params output.Params) (Config, error) {
 		}
 		if table := q.Get("table"); table != "" {
 			cfg.Table = table
+		}
+		if pushInterval := q.Get("pushInterval"); pushInterval != "" {
+			d, err := time.ParseDuration(pushInterval)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid pushInterval URL parameter value %q: %w", pushInterval, err)
+			}
+			cfg.PushInterval = d
 		}
 		if schemaMode := q.Get("schemaMode"); schemaMode != "" {
 			cfg.SchemaMode = schemaMode
@@ -478,6 +485,48 @@ func ParseConfig(params output.Params) (Config, error) {
 		if tlsServerName := q.Get("tlsServerName"); tlsServerName != "" {
 			cfg.TLS.ServerName = tlsServerName
 		}
+
+		// Parse retry URL parameters
+		if retryAttempts := q.Get("retryAttempts"); retryAttempts != "" {
+			v, err := strconv.ParseUint(retryAttempts, 10, 32)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid retryAttempts URL parameter value %q: %w", retryAttempts, err)
+			}
+			cfg.RetryAttempts = uint(v)
+		}
+		if retryDelay := q.Get("retryDelay"); retryDelay != "" {
+			d, err := time.ParseDuration(retryDelay)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid retryDelay URL parameter value %q: %w", retryDelay, err)
+			}
+			cfg.RetryDelay = d
+		}
+		if retryMaxDelay := q.Get("retryMaxDelay"); retryMaxDelay != "" {
+			d, err := time.ParseDuration(retryMaxDelay)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid retryMaxDelay URL parameter value %q: %w", retryMaxDelay, err)
+			}
+			cfg.RetryMaxDelay = d
+		}
+
+		// Parse buffer URL parameters
+		if bufferEnabled := q.Get("bufferEnabled"); bufferEnabled != "" {
+			enabled, err := strconv.ParseBool(bufferEnabled)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid bufferEnabled URL parameter value %q: %w", bufferEnabled, err)
+			}
+			cfg.BufferEnabled = enabled
+		}
+		if bufferMaxSamples := q.Get("bufferMaxSamples"); bufferMaxSamples != "" {
+			v, err := strconv.Atoi(bufferMaxSamples)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid bufferMaxSamples URL parameter value %q: %w", bufferMaxSamples, err)
+			}
+			cfg.BufferMaxSamples = v
+		}
+		if bufferDropPolicy := q.Get("bufferDropPolicy"); bufferDropPolicy != "" {
+			cfg.BufferDropPolicy = bufferDropPolicy
+		}
 	}
 
 	// Parse environment variables (highest priority)
@@ -495,6 +544,13 @@ func ParseConfig(params output.Params) (Config, error) {
 	}
 	if table := os.Getenv("K6_CLICKHOUSE_TABLE"); table != "" {
 		cfg.Table = table
+	}
+	if pushInterval := os.Getenv("K6_CLICKHOUSE_PUSH_INTERVAL"); pushInterval != "" {
+		d, err := time.ParseDuration(pushInterval)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_PUSH_INTERVAL value %q: %w", pushInterval, err)
+		}
+		cfg.PushInterval = d
 	}
 	if schemaMode := os.Getenv("K6_CLICKHOUSE_SCHEMA_MODE"); schemaMode != "" {
 		cfg.SchemaMode = schemaMode
