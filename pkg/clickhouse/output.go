@@ -15,8 +15,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/avast/retry-go/v4"
 	"github.com/sirupsen/logrus"
-	"go.k6.io/k6/metrics"
-	"go.k6.io/k6/output"
+	"go.k6.io/k6/v2/metrics"
+	"go.k6.io/k6/v2/output"
 )
 
 // Memory pools for reducing allocations during high-throughput operations

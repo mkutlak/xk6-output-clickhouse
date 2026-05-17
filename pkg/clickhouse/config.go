@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"go.k6.io/k6/output"
+	"go.k6.io/k6/v2/output"
 )
 
 // validIdentifierRegex matches valid ClickHouse identifiers

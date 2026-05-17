@@ -4,7 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"go.k6.io/k6/metrics"
+	"go.k6.io/k6/v2/metrics"
 )
 
 // DropPolicy determines which samples to drop when the buffer overflows.

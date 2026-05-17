@@ -6,7 +6,7 @@ import (
 	"github.com/mkutlak/xk6-output-clickhouse/pkg/clickhouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.k6.io/k6/output"
+	"go.k6.io/k6/v2/output"
 )
 
 // TestRegistration verifies that the output extension is properly registered

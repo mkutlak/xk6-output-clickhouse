@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"go.k6.io/k6/metrics"
+	"go.k6.io/k6/v2/metrics"
 )
 
 // CompatibleSchemaImpl is the legacy compatible schema implementation.
