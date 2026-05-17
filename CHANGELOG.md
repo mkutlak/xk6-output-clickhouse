@@ -1,3 +1,9 @@
+## [0.5.9](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.8...v0.5.9) (2026-05-17)
+
+### Bug Fixes
+
+* honor bare host:port in the output config argument ([7d3968a](https://github.com/mkutlak/xk6-output-clickhouse/commit/7d3968af82b83dba495ef20fcf70600604a50cd0))
+
 ## [0.5.8](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.7...v0.5.8) (2026-03-25)
 
 ### Code Refactoring
