@@ -1,3 +1,9 @@
+## [0.6.1](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.6.0...v0.6.1) (2026-06-10)
+
+### Bug Fixes
+
+* repair local stack, harden config/shutdown, document semantics ([8a2ab54](https://github.com/mkutlak/xk6-output-clickhouse/commit/8a2ab543611e7f7ae1746ed4a13040f758610c36))
+
 ## [0.6.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.9...v0.6.0) (2026-05-17)
 
 > **⚠️ BREAKING CHANGE:** This release migrates to k6 **v2.x** (`go.k6.io/k6/v2`).
