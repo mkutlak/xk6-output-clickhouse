@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26.3-alpine3.23 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.23 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG XK6_VERSION=latest
@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --with ${MODULE_NAME}=. \
     --output /build/k6
 
-FROM alpine:3.23
+FROM alpine:3.24
 LABEL org.opencontainers.image.title="xk6-output-clickhouse" \
       org.opencontainers.image.description="k6 with ClickHouse output extension" \
       org.opencontainers.image.source="https://github.com/mkutlak/xk6-output-clickhouse"
