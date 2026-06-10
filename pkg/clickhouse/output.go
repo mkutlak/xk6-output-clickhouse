@@ -54,6 +54,12 @@ type commitError struct{ err error }
 func (e *commitError) Error() string { return "commit error: " + e.err.Error() }
 func (e *commitError) Unwrap() error { return e.err }
 
+// isCommitError reports whether err is (or wraps) a commitError.
+func isCommitError(err error) bool {
+	_, ok := errors.AsType[*commitError](err)
+	return ok
+}
+
 // escapeIdentifier escapes a ClickHouse identifier with backticks
 func escapeIdentifier(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "\\`") + "`"
@@ -127,6 +133,11 @@ type ErrorMetrics struct {
 	DroppedSamples uint64
 }
 
+// Compile-time assertion that *Output satisfies k6's output.Output interface.
+// AddMetricSamples is promoted from the embedded output.SampleBuffer; this makes an
+// accidental break surface here rather than at the RegisterExtension call site.
+var _ output.Output = (*Output)(nil)
+
 // New creates a new ClickHouse output
 func New(params output.Params) (output.Output, error) {
 	cfg, err := ParseConfig(params)
@@ -170,21 +181,7 @@ func (o *Output) Start() error {
 		return fmt.Errorf("failed to build TLS config: %w", err)
 	}
 
-	// Warn if using port 9000 with TLS (should use 9440)
-	if o.config.TLS.Enabled && strings.Contains(o.config.Addr, ":9000") {
-		o.logger.Warn("TLS is enabled but using port 9000. Consider using port 9440 for secure connections.")
-	}
-
-	// Log TLS status
-	if o.config.TLS.Enabled {
-		if o.config.TLS.InsecureSkipVerify {
-			o.logger.Warn("TLS enabled with InsecureSkipVerify=true. Certificate verification is DISABLED. This is insecure and should only be used for testing.")
-		} else {
-			o.logger.Debug("TLS enabled with certificate verification")
-		}
-	} else {
-		o.logger.Debug("TLS disabled, using unencrypted connection")
-	}
+	o.logTLSStatus()
 
 	// Connect to ClickHouse without specifying database in auth.
 	// This allows CREATE DATABASE IF NOT EXISTS to work when the target database doesn't exist.
@@ -200,7 +197,9 @@ func (o *Output) Start() error {
 
 	// Test connection
 	if err := db.PingContext(o.shutdownCtx); err != nil {
-		return fmt.Errorf("failed to ping clickhouse: %w", err)
+		return fmt.Errorf("failed to connect to clickhouse at %s: %w "+
+			"(verify the address and the native port — 9000 by default, not the 8123 HTTP port — and the credentials)",
+			o.config.Addr, err)
 	}
 
 	o.db = db
@@ -256,6 +255,38 @@ func (o *Output) Start() error {
 	return nil
 }
 
+// logTLSStatus logs warnings about the TLS configuration: using the plaintext
+// port with TLS, verification being disabled, and TLS material that will be
+// silently ignored. Extracted from Start() to keep its complexity in check.
+func (o *Output) logTLSStatus() {
+	if !o.config.TLS.Enabled {
+		// Surface silently-ignored TLS material so a forgotten tlsEnabled doesn't
+		// leave the connection unencrypted while certs are configured.
+		if o.config.TLS.CAFile != "" || o.config.TLS.CertFile != "" || o.config.TLS.KeyFile != "" {
+			o.logger.Warn("TLS certificate/CA files are configured but TLS is disabled; they will be ignored. Set tlsEnabled=true (or K6_CLICKHOUSE_TLS_ENABLED=true) to use them.")
+		}
+		o.logger.Debug("TLS disabled, using unencrypted connection")
+		return
+	}
+
+	// Warn if using the plaintext native port 9000 with TLS (should be 9440).
+	if strings.Contains(o.config.Addr, ":9000") {
+		o.logger.Warn("TLS is enabled but using port 9000. Consider using port 9440 for secure connections.")
+	}
+
+	if o.config.TLS.InsecureSkipVerify {
+		o.logger.Warn("TLS enabled with InsecureSkipVerify=true. Certificate verification is DISABLED. This is insecure and should only be used for testing.")
+		// With verification disabled, RootCAs and ServerName are not consulted —
+		// warn so the user isn't misled into thinking the CA/SNI is enforced.
+		if o.config.TLS.CAFile != "" || o.config.TLS.ServerName != "" {
+			o.logger.Warn("InsecureSkipVerify=true overrides certificate verification: the configured CA file and serverName are ignored.")
+		}
+		return
+	}
+
+	o.logger.Debug("TLS enabled with certificate verification")
+}
+
 // Stop flushes remaining metrics and closes the connection
 func (o *Output) Stop() error {
 	// Check if already stopped (read-only check to avoid blocking)
@@ -302,10 +333,32 @@ func (o *Output) Stop() error {
 
 		samples := o.failoverBuffer.PopAll()
 		if len(samples) > 0 {
-			if err := o.doFlush(drainCtx, samples); err != nil {
-				o.logger.WithError(err).WithField("lostSamples", len(samples)).Warn("Failed to drain buffer on shutdown, data may be lost")
-			} else {
+			// Retry the final drain with the same backoff policy as a normal flush.
+			// The outage that filled the buffer may still be flapping, so a single
+			// unretried attempt would needlessly lose data inside the 30s window.
+			// config is immutable after New(); no flushes are in flight here (we
+			// already waited on flushWG), so reading it without the lock is safe.
+			err := retry.Do(
+				func() error { return o.doFlush(drainCtx, samples) },
+				retry.Attempts(o.config.RetryAttempts+1),
+				retry.Delay(o.config.RetryDelay),
+				retry.MaxDelay(o.config.RetryMaxDelay),
+				retry.DelayType(retry.BackOffDelay),
+				retry.Context(drainCtx),
+				retry.RetryIf(isRetryableError),
+			)
+			switch {
+			case err == nil:
 				o.logger.WithField("flushedSamples", len(samples)).Info("Successfully drained failover buffer")
+			case isCommitError(err):
+				// Commit errors are ambiguous — the server may already hold the data.
+				// Don't count them as dropped (mirrors flush()).
+				o.logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error during shutdown drain (data may already be persisted)")
+			default:
+				// Unrecoverable at shutdown; count the loss so the final metrics
+				// summary is accurate instead of silently under-reporting drops.
+				o.droppedSamples.Add(uint64(len(samples)))
+				o.logger.WithError(err).WithField("lostSamples", len(samples)).Warn("Failed to drain buffer on shutdown, data lost")
 			}
 		}
 	}
@@ -367,7 +420,7 @@ func isRetryableError(err error) bool {
 	}
 
 	// Commit errors are never retryable — the server may have already persisted data
-	if _, ok := errors.AsType[*commitError](err); ok {
+	if isCommitError(err) {
 		return false
 	}
 
@@ -473,8 +526,10 @@ func (o *Output) flush() {
 		retry.OnRetry(func(n uint, err error) {
 			o.retryAttempts.Add(1)
 			logger.WithError(err).WithFields(logrus.Fields{
+				// Total attempt budget is retryAttempts+1 (initial + retries);
+				// report that so "attempt" never exceeds "maxAttempts".
 				"attempt":     n + 1,
-				"maxAttempts": retryAttempts,
+				"maxAttempts": retryAttempts + 1,
 			}).Warn("Flush failed, retrying")
 		}),
 		retry.RetryIf(isRetryableError),
@@ -486,7 +541,7 @@ func (o *Output) flush() {
 
 		// Commit errors are ambiguous — data may already be persisted.
 		// Do NOT buffer these samples to avoid duplication on next flush.
-		if _, ok := errors.AsType[*commitError](err); ok {
+		if isCommitError(err) {
 			logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error (data may already be persisted), not buffering samples")
 			return
 		}

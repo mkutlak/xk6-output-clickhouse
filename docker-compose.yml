@@ -33,7 +33,7 @@ services:
       - clickhouse_data:/var/lib/clickhouse
       - clickhouse_logs:/var/log/clickhouse-server
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1' || exit 1"]
+      test: ["CMD-SHELL", "clickhouse-client --user ${CLICKHOUSE_USER:-default} --password ${CLICKHOUSE_PASSWORD:-password} --query 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -61,7 +61,10 @@ services:
       GF_PLUGINS_PREINSTALL: grafana-clickhouse-datasource
     volumes:
       - grafana_data:/var/lib/grafana
-      - grafana_provisioning:/etc/grafana/provisioning
+      # Bind-mount provisioning so the ClickHouse datasource/dashboard configs are
+      # actually loaded. A named volume here would shadow ./grafana/provisioning
+      # with an empty directory, leaving Grafana with no datasource.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -158,8 +161,6 @@ volumes:
   clickhouse_logs:
     driver: local
   grafana_data:
-    driver: local
-  grafana_provisioning:
     driver: local
   k6_results:
     driver: local

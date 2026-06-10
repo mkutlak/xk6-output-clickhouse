@@ -1,0 +1,20 @@
+apiVersion: 1
+
+datasources:
+  - name: ClickHouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    # The grafana-clickhouse-datasource plugin reads connection details from
+    # jsonData (host/port/protocol/username) — NOT the generic `url` field — and
+    # the secret from secureJsonData. Using `url`/secureJsonData.username here
+    # leaves the datasource unable to connect ("invalid server host").
+    jsonData:
+      host: clickhouse
+      port: 9000
+      protocol: native
+      defaultDatabase: k6
+      username: default
+    secureJsonData:
+      password: password
+    isDefault: true
+    editable: true

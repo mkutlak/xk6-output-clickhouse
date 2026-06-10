@@ -1,5 +1,16 @@
 # Examples & Usage
 
+## Example Scripts
+
+The [`examples/`](../examples) directory contains ready-to-run k6 scripts. They
+hold only the k6 *workload* — the ClickHouse output is selected with `--out` (or
+`--config`/env vars), never from inside the script:
+
+- `examples/simple.js` — a minimal workload. Run it with an explicit output:
+  `./bin/k6 run --out xk6-clickhouse=localhost:9000 examples/simple.js`
+- `examples/tls-config.js` + `examples/tls-config.json` — TLS/mTLS via a `--config`
+  file: `./bin/k6 run --config examples/tls-config.json --out xk6-clickhouse examples/tls-config.js`
+
 ## Basic Usage
 
 Run a k6 test with ClickHouse output using the default settings:
@@ -68,7 +79,12 @@ file with `--config`:
 
 ## Grafana Integration
 
-### Add ClickHouse Data Source
+> When using the bundled `make docker-compose-up` (dev/full profiles), the
+> ClickHouse data source is **auto-provisioned** from
+> `grafana/provisioning/datasources/clickhouse.yml` — no manual setup needed. No
+> dashboards are bundled; create your own or import a community ClickHouse dashboard.
+
+### Add ClickHouse Data Source (manual setup)
 
 1. In Grafana, go to **Data Sources** -> **Add data source**.
 2. Select **ClickHouse**.

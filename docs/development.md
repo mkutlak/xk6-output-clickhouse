@@ -45,6 +45,21 @@ make lint
 - **TLS Handshake Error**: Verify TLS configuration and port (usually 9440 for TLS).
 - **Buffer Overflow**: If you see "buffer overflow, dropping samples", consider increasing `bufferMaxSamples` or decreasing `pushInterval`.
 
+## Maintenance Scripts
+
+The [`scripts/`](../scripts) directory holds one-off ClickHouse backfill helpers
+for the **compatible** schema only (they operate on the `check_name`/`ui_feature`/
+`extra_tags` columns, which the simple schema does not have). They require
+`clickhouse-client` in `PATH`.
+
+- `scripts/backfill_check.sh` — backfill `check_name` from `extra_tags['check']`.
+- `scripts/backfill_ui_feature.sh` — backfill `ui_feature` from `extra_tags['uiFeature']`.
+
+Both execute a live `ALTER TABLE ... UPDATE` mutation by default; pass `--dry-run`
+to preview the affected row count and SQL without executing. Pass connection
+details with `-h/-p/-u/-P/-d/-t` (against the bundled docker-compose, use
+`-P password`).
+
 ## Contributing
 
 1. Fork the repository.

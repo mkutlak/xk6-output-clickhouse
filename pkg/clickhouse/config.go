@@ -24,6 +24,12 @@ func isValidIdentifier(name string) bool {
 	return validIdentifierRegex.MatchString(name)
 }
 
+// maxRetryAttempts caps Config.RetryAttempts. A sane upper bound prevents two
+// footguns: a typo'd huge value stalling every flush (and hanging Stop()), and
+// an integer overflow where flush() passes retry.Attempts(RetryAttempts+1) —
+// MaxUint+1 wraps to 0, which retry-go interprets as INFINITE retry. See Validate().
+const maxRetryAttempts = 100
+
 // TLSConfig holds TLS/SSL configuration options
 type TLSConfig struct {
 	// Enabled controls whether TLS is enabled
@@ -104,7 +110,7 @@ type Config struct {
 	SchemaMode string
 
 	// SkipSchemaCreation disables automatic database and table creation.
-	// Env: K6_CLICKHOUSE_SKIP_SCHEMA_CREATION ("true" to skip)
+	// Env: K6_CLICKHOUSE_SKIP_SCHEMA_CREATION (parsed as bool, e.g. "true"/"1" to skip)
 	SkipSchemaCreation bool
 
 	// TLS holds TLS/SSL configuration
@@ -244,11 +250,20 @@ func (c Config) Validate() error {
 	}
 
 	// Validate retry configuration
+	if c.RetryAttempts > maxRetryAttempts {
+		return fmt.Errorf("retry attempts must not exceed %d, got %d", maxRetryAttempts, c.RetryAttempts)
+	}
 	if c.RetryDelay < 0 {
 		return fmt.Errorf("retry delay must be non-negative, got %v", c.RetryDelay)
 	}
 	if c.RetryMaxDelay < 0 {
 		return fmt.Errorf("retry max delay must be non-negative, got %v", c.RetryMaxDelay)
+	}
+	// A zero max delay disables the exponential-backoff cap, letting per-retry
+	// delays grow without bound. Require a positive cap whenever retries with a
+	// non-zero base delay are enabled, so a misconfigured "0" can't stall flushes.
+	if c.RetryAttempts > 0 && c.RetryDelay > 0 && c.RetryMaxDelay == 0 {
+		return fmt.Errorf("retry max delay must be positive when retries are enabled (got 0); set retryMaxDelay to cap exponential backoff")
 	}
 	if c.RetryMaxDelay > 0 && c.RetryDelay > c.RetryMaxDelay {
 		return fmt.Errorf("retry delay (%v) cannot exceed max delay (%v)", c.RetryDelay, c.RetryMaxDelay)
@@ -313,8 +328,8 @@ func ParseConfig(params output.Params) (Config, error) {
 			SchemaMode         string `json:"schemaMode"`
 			SkipSchemaCreation *bool  `json:"skipSchemaCreation"` // Pointer to distinguish unset from false
 			TLS                *struct {
-				Enabled            bool   `json:"enabled"`
-				InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+				Enabled            *bool  `json:"enabled"`            // Pointer to distinguish unset from false
+				InsecureSkipVerify *bool  `json:"insecureSkipVerify"` // Pointer to distinguish unset from false
 				CAFile             string `json:"caFile"`
 				CertFile           string `json:"certFile"`
 				KeyFile            string `json:"keyFile"`
@@ -364,8 +379,14 @@ func ParseConfig(params output.Params) (Config, error) {
 		}
 		// Parse TLS config
 		if jsonConf.TLS != nil {
-			cfg.TLS.Enabled = jsonConf.TLS.Enabled
-			cfg.TLS.InsecureSkipVerify = jsonConf.TLS.InsecureSkipVerify
+			// Enabled/InsecureSkipVerify are pointers so an omitted key leaves the
+			// existing value untouched (rather than silently forcing it to false).
+			if jsonConf.TLS.Enabled != nil {
+				cfg.TLS.Enabled = *jsonConf.TLS.Enabled
+			}
+			if jsonConf.TLS.InsecureSkipVerify != nil {
+				cfg.TLS.InsecureSkipVerify = *jsonConf.TLS.InsecureSkipVerify
+			}
 			if jsonConf.TLS.CAFile != "" {
 				cfg.TLS.CAFile = jsonConf.TLS.CAFile
 			}
@@ -455,7 +476,11 @@ func ParseConfig(params output.Params) (Config, error) {
 			cfg.SchemaMode = schemaMode
 		}
 		if skipSchema := q.Get("skipSchemaCreation"); skipSchema != "" {
-			cfg.SkipSchemaCreation = skipSchema == "true"
+			v, err := strconv.ParseBool(skipSchema)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid skipSchemaCreation URL parameter value %q: %w", skipSchema, err)
+			}
+			cfg.SkipSchemaCreation = v
 		}
 
 		// Parse TLS URL parameters
@@ -556,7 +581,11 @@ func ParseConfig(params output.Params) (Config, error) {
 		cfg.SchemaMode = schemaMode
 	}
 	if skipSchema := os.Getenv("K6_CLICKHOUSE_SKIP_SCHEMA_CREATION"); skipSchema != "" {
-		cfg.SkipSchemaCreation = skipSchema == "true"
+		v, err := strconv.ParseBool(skipSchema)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_SKIP_SCHEMA_CREATION value %q: %w", skipSchema, err)
+		}
+		cfg.SkipSchemaCreation = v
 	}
 
 	// Parse TLS environment variables

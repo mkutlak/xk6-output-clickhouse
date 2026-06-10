@@ -172,9 +172,11 @@ func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatib
 
 	// Extract and map tags to columns
 	if sample.Tags != nil {
-		srcTags := sample.Tags.Map()
-		tagMap := make(map[string]string, len(srcTags))
-		maps.Copy(tagMap, srcTags)
+		// Copy source tags once into the pooled map; extraction deletes known keys,
+		// leaving only the leftovers as extra_tags — no scratch map, no second copy.
+		// We delete from the pooled copy, so k6's source tag map is never mutated.
+		maps.Copy(cs.ExtraTags, sample.Tags.Map())
+		tagMap := cs.ExtraTags
 
 		// TestID (with aliases)
 		if testID, ok := getAndDelete(tagMap, "testid"); ok {
@@ -237,13 +239,14 @@ func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatib
 			}
 		}
 
-		// ExpectedResponse (with type conversion)
+		// ExpectedResponse: k6 only ever emits "true"/"false" for this tag, so a
+		// lenient equality check is sufficient. Any other value is treated as false
+		// (rather than failing the whole sample, as a strict parse would).
 		if expResp, ok := getAndDelete(tagMap, "expected_response"); ok {
 			cs.ExpectedResponse = expResp == "true"
 		}
 
-		// Remaining tags go to extra_tags
-		maps.Copy(cs.ExtraTags, tagMap)
+		// Remaining (unrecognized) tags already live in cs.ExtraTags — no extra copy.
 	} else {
 		// No tags, use defaults
 		cs.TestID = "default"

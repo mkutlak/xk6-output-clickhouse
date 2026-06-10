@@ -19,9 +19,13 @@ A [k6](https://k6.io) extension for outputting load test metrics to [ClickHouse]
 ### Build
 
 ```bash
-go install go.k6.io/xk6/cmd/xk6@latest
+# Build with the pinned xk6 version this extension is tested against (see .xk6-version).
+go install go.k6.io/xk6/cmd/xk6@v1.4.6
 xk6 build --with github.com/mkutlak/xk6-output-clickhouse@latest
 ```
+
+> Prefer `make build` for local development — it uses the pinned xk6 version
+> automatically and writes the binary to `./bin/k6`.
 
 ### Run
 
@@ -32,6 +36,22 @@ docker run -d --name clickhouse -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-
 # Run k6
 ./k6 run --out xk6-clickhouse=localhost:9000 script.js
 ```
+
+## Compatibility
+
+| | Requirement |
+| --- | --- |
+| **k6** | **v2.x** — this extension is built on `go.k6.io/k6/v2`. It is **not** compatible with k6 v1.x. |
+| **Go** | 1.26+ |
+| **xk6** | v1.4.6 (pinned in `.xk6-version`) |
+| **ClickHouse** | native protocol (clickhouse-go/v2); tested against 26.x |
+
+This project is pre-1.0: minor releases may include breaking changes. Pin a
+released tag (e.g. `@v0.6.0`) rather than `@latest` for reproducible builds.
+
+> **Upgrading from a build that used k6 v1.x?** Rebuild with k6 v2.x / the pinned
+> xk6 above. No configuration, schema, env-var, or output-name changes are
+> required — only the k6 module path changed (`go.k6.io/k6` → `go.k6.io/k6/v2`).
 
 ## Documentation
 

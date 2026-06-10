@@ -31,7 +31,8 @@ make test-coverage  # coverage report -> tests/coverage.html
 
 # Local dev environment (ClickHouse + Grafana)
 make docker-compose-up   # ClickHouse on :9000/:8123, Grafana on :3000
-./bin/k6 run --out xk6-clickhouse=localhost:9000 examples/simple.js
+# docker-compose sets a password; pass it (the compose default is "password")
+./bin/k6 run --out "xk6-clickhouse=localhost:9000?password=password" examples/simple.js
 ```
 
 Run a single test:

@@ -6,7 +6,7 @@ Thank you for your interest in contributing to `xk6-output-clickhouse`! We welco
 
 ### Prerequisites
 
-- [Go](https://golang.org/doc/install) (1.25 or later recommended)
+- [Go](https://golang.org/doc/install) (1.26 or later — required; the code uses Go 1.26 APIs such as `errors.AsType`)
 - [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/install/) (for integration testing)
 - [Make](https://www.gnu.org/software/make/)
 
@@ -103,7 +103,11 @@ Please ensure `make check` passes before submitting a pull request.
 
 2. Make your changes. Remember to add tests!
 3. Run `make check` to ensure everything is in order.
-4. Commit your changes. We prefer clear, descriptive commit messages.
+4. Commit your changes. This project uses [Conventional Commits](https://www.conventionalcommits.org/)
+   with semantic-release: prefix commits with `feat:`, `fix:`, `docs:`, `refactor:`,
+   etc. **For any change that breaks compatibility (e.g. a k6/Go version bump that
+   drops support for an older version), use `feat!:` or include a `BREAKING CHANGE:`
+   footer** so the release is versioned and announced correctly.
 5. Push to your fork and submit a Pull Request.
 
 ### Guidelines

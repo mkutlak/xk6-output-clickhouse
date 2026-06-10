@@ -1,0 +1,20 @@
+{
+  "collectors": {
+    "xk6-clickhouse": {
+      "addr": "clickhouse.example.com:9440",
+      "user": "k6user",
+      "password": "secret",
+      "database": "k6",
+      "table": "samples",
+      "schemaMode": "simple",
+      "tls": {
+        "enabled": true,
+        "caFile": "/path/to/ca.pem",
+        "certFile": "/path/to/client-cert.pem",
+        "keyFile": "/path/to/client-key.pem",
+        "serverName": "clickhouse.example.com",
+        "insecureSkipVerify": false
+      }
+    }
+  }
+}

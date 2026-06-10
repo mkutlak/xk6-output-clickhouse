@@ -55,6 +55,46 @@ SETTINGS index_granularity = 8192
 
 Known tags extracted to typed columns with compression codecs. 365-day TTL for automatic cleanup.
 
+### Tag → Column Mapping (Compatible Schema)
+
+The compatible converter pulls known k6 tags into typed columns (some accept
+aliases and are type-coerced). **Any tag not listed here is preserved in the
+`extra_tags` map.** Unrecognized type coercions (a non-numeric `buildId`/`status`)
+drop that single sample.
+
+| Column              | Source tag (and aliases)        | Coercion | Default when absent              |
+| ------------------- | ------------------------------- | -------- | -------------------------------- |
+| `testid`            | `testid`, `test_run_id`         | string   | `default`                        |
+| `build_id`          | `buildId`                       | UInt32   | process-start Unix time (non-zero) |
+| `release`           | `release`                       | string   | `` (empty)                       |
+| `version`           | `version`                       | string   | `` (empty)                       |
+| `branch`            | `branch`                        | string   | `master`                         |
+| `scenario`          | `scenario`                      | string   | `` (empty)                       |
+| `name`              | `name`                          | string   | `` (empty)                       |
+| `method`            | `method`                        | string   | `` (empty)                       |
+| `status`            | `status`                        | UInt16   | `0`                              |
+| `expected_response` | `expected_response`             | Bool (`"true"`→true, else false) | `true`           |
+| `error_code`        | `error_code`                    | string   | `` (empty)                       |
+| `rating`            | `rating`                        | string   | `` (empty)                       |
+| `resource_type`     | `resource_type`                 | string   | `` (empty)                       |
+| `ui_feature`        | `ui_feature`, `uiFeature`       | string   | `` (empty)                       |
+| `check_name`        | `check` (k6 native), `check_name` | string | `` (empty)                       |
+| `group_name`        | `group_name`, `group`           | string   | `` (empty)                       |
+| `metric_type`       | derived from the k6 metric type | Enum8    | —                                |
+
+> **Converter defaults vs SQL `DEFAULT`**: the SQL above shows `DEFAULT` clauses
+> (e.g. `testid DEFAULT ''`, `build_id DEFAULT 0`, `branch DEFAULT 'master'`), but
+> the converter always writes **explicit** values — including `testid='default'`,
+> `build_id=<process-start time>`, and `branch='master'`. The SQL defaults therefore
+> only apply to rows inserted by other clients. Filter dashboards on `testid='default'`
+> / a non-zero `build_id`, not on `''`/`0`, for rows written by this extension.
+
+### `metric_type` values
+
+`metric_type` is an `Enum8` mapping the k6 metric type: `counter`=1, `gauge`=2,
+`rate`=3, `trend`=4. Any unknown type falls back to `trend`. The **simple** schema
+has no `metric_type` column — use the `metric` name to distinguish series there.
+
 ## Schema Comparison
 
 | Feature     | Simple           | Compatible             |

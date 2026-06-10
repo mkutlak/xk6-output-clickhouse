@@ -1,5 +1,12 @@
 ## [0.6.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.5.9...v0.6.0) (2026-05-17)
 
+> **⚠️ BREAKING CHANGE:** This release migrates to k6 **v2.x** (`go.k6.io/k6/v2`).
+> The extension now requires k6 v2.x; building with k6 v1.x is no longer supported.
+> No configuration, schema, env-var, or output-name changes are required — only the
+> k6 module path changed. See the Compatibility section in the README.
+> _(Note: per SemVer this warranted a major bump; it shipped as a minor under the
+> pre-1.0 policy. Pin a released tag rather than `@latest`.)_
+
 ### Features
 
 * migrate to k6 v2.0.0 ([9f85e13](https://github.com/mkutlak/xk6-output-clickhouse/commit/9f85e13f095adcfbef769b9a1e9aaaa97f728b68))
