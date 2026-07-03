@@ -1,3 +1,5 @@
+## [0.6.2](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.6.1...v0.6.2) (2026-07-03)
+
 ## [0.6.1](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.6.0...v0.6.1) (2026-06-10)
 
 ### Bug Fixes
