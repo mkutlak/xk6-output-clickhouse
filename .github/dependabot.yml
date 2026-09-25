@@ -11,7 +11,6 @@ updates:
       - dependencies
     commit-message:
       prefix: "chore(deps)"
-      include: "scope"
     allow:
       - dependency-type: "production"
       - dependency-type: "development"
@@ -29,7 +28,6 @@ updates:
       - dependencies
     commit-message:
       prefix: "chore(ci)"
-      include: "scope"
     assignees:
       - mkutlak
 
@@ -44,6 +42,5 @@ updates:
       - dependencies
     commit-message:
       prefix: "chore(docker)"
-      include: "scope"
     assignees:
       - mkutlak
