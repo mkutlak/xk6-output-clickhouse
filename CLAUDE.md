@@ -27,6 +27,7 @@ make modernize      # apply Go modernizers (go fix)
 # Build & test
 make build          # build ./bin/k6 with the extension (uses xk6)
 make test           # go test -v -race ./...
+make test-unit      # go test -short -race ./... (no Docker required)
 make test-coverage  # coverage report -> tests/coverage.html
 
 # Local dev environment (ClickHouse + Grafana)
@@ -67,47 +68,47 @@ go test -race -run TestName ./pkg/clickhouse/
 
 All source code lives in `pkg/clickhouse/`. The single `register.go` at the repo root registers the extension with k6 as `xk6-clickhouse`.
 
+Public API surface: `New` (constructs the output), `Schema` (the pluggable-schema interface), and `RegisterSchema` (registers a custom schema). Everything else is internal.
+
 ### Core Components
 
-- **`output.go`** — Main `Output` struct implementing k6's `output.Output`. Manages DB connection, periodic flushing, retry logic, and graceful shutdown. Uses `sync.Pool` for zero-allocation row/tag map reuse.
+- **`output.go`** — `clickhouseOutput` (k6 `output.Output`). `New` resolves config, schema, TLS and the quoted table once; `Start` connects, creates the database/table and starts k6's `PeriodicFlusher`; `flush` → `write` (convert once) → `insertRows` (retried); failed samples wait in `pending`, trimmed by `bound()`; `Stop` drains once and closes the connection.
 
-- **`config.go`** — Hierarchical config parsing (env vars `K6_CLICKHOUSE_*` > URL params > JSON config file `collectors.xk6-clickhouse` > defaults). All config options use struct pointers to distinguish unset from false.
+- **`config.go`** — Hierarchical config parsing: JSON config (`collectors.xk6-clickhouse`) < `--out` DSN argument < `K6_CLICKHOUSE_*` environment variables (later sources override earlier ones), then `validate()`. A single `options` table lists every config key with its environment variable name; `set()` assigns a parsed value to the matching `config` field.
 
-- **`interfaces.go`** — `SchemaCreator` (DDL + INSERT query) and `SampleConverter` (k6 sample → DB row) interfaces that make schemas pluggable.
-
-- **`registry.go`** — Thread-safe schema registry. Custom schemas register at init time via `RegisterSchema()`.
+- **`registry.go`** — Thread-safe schema registry keyed by `schemaMode` name. The public `Schema` interface (`CreateTable`, `InsertQuery`, `Row`) makes schemas pluggable; custom schemas register at init time via `RegisterSchema()`.
 
 - **`schema_simple.go`** — Default schema: `timestamp`, `metric`, `value`, `tags` (Map column). Most flexible.
 
 - **`schema_compat.go`** — Legacy schema with 21 typed columns extracting known tags for better compression/query perf. Uses codecs (DoubleDelta, Gorilla, ZSTD) and 365-day TTL.
 
-- **`buffer.go`** — Ring buffer for resilience during ClickHouse outages. Configurable capacity and drop policy (oldest/newest). Samples are replayed on next successful flush.
-
-- **`helpers.go`** — Small shared helpers: k6-metric-type → ClickHouse-enum mapping, map get-and-delete utilities, and safe Unix-timestamp conversion.
-
 ### Data Flow
 
 ```text
-k6 samples → AddMetricSamples → periodic flush (every PushInterval)
-  → retry.Do with exponential backoff
-    → BEGIN tx → Prepare INSERT → Convert samples via SampleConverter → Commit
-  → on failure: push to failover buffer → retry next cycle
-  → on Stop: drain buffer with fresh context, close connection
+k6 samples → AddMetricSamples (k6's output.SampleBuffer) → PeriodicFlusher calls flush every PushInterval
+  → flush: pending samples (from a prior failed flush) + newly buffered samples
+    → write: convert each sample to a row once via Schema.Row
+      → insertRows with retry.Do (exponential backoff): BEGIN tx → Prepare INSERT → Exec each row → Commit
+  → on failure: non-commit errors are kept in pending (trimmed to BufferMaxSamples via bound()) for the next flush;
+    commit errors are ambiguous (data may already be persisted) and are neither retried nor re-buffered
+  → on Stop: stop the flusher, drain pending once with a fresh bounded context, close the DB connection
 ```
 
 ### Key Design Decisions
 
-- **Object pooling** (`sync.Pool`) for tag maps and row slices to minimize GC pressure under high throughput
-- **Flush mutex** prevents overlapping flushes; WaitGroup tracks in-flight flushes for clean shutdown
-- **Commit errors** are treated as potential success to prevent duplicate inserts on retry
-- **RWMutex** on connection state allows concurrent reads during health checks
+- **No internal locking around flush** — k6's `PeriodicFlusher` invokes `flush` on a single goroutine, one call at a time, so there is no flush mutex, WaitGroup, or RWMutex in this package
+- **No object pooling** — `TagSet.Map()` already returns a fresh map per sample; rows are plain slices allocated per flush
+- **Commit errors are ambiguous, not retried** — if `Commit()` fails, the server may have already persisted the data, so those samples are neither retried nor re-buffered (avoids duplicate inserts)
+- **Samples are converted once per flush** — only the database write (`insertRows`) is retried; a converted row is never re-converted
+- **`BufferMaxSamples` counts samples**, not bytes; `bound()` drops the oldest or newest samples per `BufferDropPolicy` once the pending buffer exceeds the limit
 
 ## Testing
 
 - Add tests for every new feature and bug fix — tests are ~50% of the codebase.
-- Integration tests (`integration_test.go`) use `testcontainers-go` with a real ClickHouse container and require Docker.
-- Key test files:
-  - `concurrency_test.go` — race conditions, concurrent flush behavior
+- Integration tests (`integration_test.go`) use `testcontainers-go` with a real ClickHouse container and require Docker; run `make test-unit` to skip them.
+- Key test files, e.g.:
   - `integration_test.go` — end-to-end against real ClickHouse
   - `tls_test.go` — TLS/mTLS configuration scenarios
-  - `buffer_test.go` — ring buffer FIFO ordering, overflow policies
+  - `config_test.go` — config parsing and validation
+  - `schema_test.go` — schema DDL/INSERT/Row conversion
+  - `output_test.go` — output lifecycle and flush behavior
