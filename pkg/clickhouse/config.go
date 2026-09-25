@@ -478,25 +478,69 @@ func jsonScalar(raw json.RawMessage) (string, error) {
 	}
 }
 
-// applyArgument applies the --out argument: a bare "host:port[?query]", or a
-// URL with a scheme whose host and query are used.
-func (c *Config) applyArgument(arg string) error {
-	// A bare "host:port" is not a URL — url.Parse would misread the host as a
-	// scheme. Only parse as a URL when a scheme ("://") is present.
-	addr, rawQuery, _ := strings.Cut(arg, "?")
-	if strings.Contains(arg, "://") {
-		u, err := url.Parse(arg)
-		if err != nil {
-			return err
-		}
-		addr, rawQuery = u.Host, u.RawQuery
+// parseArgumentURL parses the --out argument as a ClickHouse DSN, prefixing
+// a "clickhouse://" scheme when arg has none (a bare "host:port" is not a
+// URL — url.Parse would misread the host as a scheme). It rejects any other
+// scheme and a fragment (which would otherwise silently truncate a password
+// containing an unencoded '#').
+func parseArgumentURL(arg string) (*url.URL, error) {
+	withScheme := arg
+	if !strings.Contains(arg, "://") {
+		withScheme = "clickhouse://" + arg
 	}
 
-	query, err := url.ParseQuery(rawQuery)
+	u, err := url.Parse(withScheme)
+	if err != nil {
+		// *url.Error embeds the whole input (including any password) in its
+		// message; unwrap to the inner error so a bad DSN never leaks it.
+		if ue, ok := errors.AsType[*url.Error](err); ok {
+			err = ue.Err
+		}
+		return nil, err
+	}
+
+	if u.Scheme != "clickhouse" {
+		return nil, fmt.Errorf("unsupported scheme %q (use clickhouse://)", u.Scheme)
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("fragment not allowed in address; percent-encode '#' as %%23 if it belongs to the password")
+	}
+
+	return u, nil
+}
+
+// applyArgument applies the --out argument, a ClickHouse DSN of the form
+// [clickhouse://][user[:password]@]host:port[/database][?option=value&...].
+func (c *Config) applyArgument(arg string) error {
+	u, err := parseArgumentURL(arg)
 	if err != nil {
 		return err
 	}
-	if err := c.set("addr", addr); err != nil {
+
+	if err := c.set("addr", u.Host); err != nil {
+		return err
+	}
+	if u.User != nil {
+		if err := c.set("user", u.User.Username()); err != nil {
+			return err
+		}
+		if password, ok := u.User.Password(); ok {
+			if err := c.set("password", password); err != nil {
+				return err
+			}
+		}
+	}
+
+	database := strings.TrimPrefix(u.Path, "/")
+	if strings.Contains(database, "/") {
+		return fmt.Errorf("address path must be a single database segment, got %q", database)
+	}
+	if err := c.set("database", database); err != nil {
+		return err
+	}
+
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
 		return err
 	}
 	for _, key := range slices.Sorted(maps.Keys(query)) {
