@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"maps"
 	"math"
 	"net/url"
 	"testing"
@@ -147,9 +148,7 @@ func TestParseConfig_EverySource(t *testing.T) {
 	// dsnQuery carries every option except the four that a DSN sets via its
 	// authority and path (addr, user, password, database).
 	dsnQuery := url.Values{}
-	for k, v := range query {
-		dsnQuery[k] = v
-	}
+	maps.Copy(dsnQuery, query)
 	delete(dsnQuery, "addr")
 	delete(dsnQuery, "user")
 	delete(dsnQuery, "password")
