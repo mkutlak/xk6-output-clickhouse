@@ -1,98 +1,53 @@
 package clickhouse
 
 import (
-	"context"
-	"database/sql"
-	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.k6.io/k6/v2/metrics"
 )
 
-// TestSchema_InvalidIdentifiers consolidates identifier validation tests for both schemas.
-func TestSchema_InvalidIdentifiers(t *testing.T) {
-	t.Parallel()
-
-	schemas := []struct {
-		name   string
-		schema SchemaCreator
-	}{
-		{"simple", &SimpleSchema{}},
-		{"compatible", &CompatibleSchema{}},
-	}
-
-	tests := []struct {
-		name          string
-		database      string
-		table         string
-		errorContains string
-	}{
-		{
-			name:          "database name with special characters",
-			database:      "k6'; DROP TABLE samples; --",
-			table:         "samples",
-			errorContains: "invalid database name",
-		},
-		{
-			name:          "table name with special characters",
-			database:      "k6",
-			table:         "samples'; DROP DATABASE k6; --",
-			errorContains: "invalid table name",
-		},
-		{
-			name:          "empty database name",
-			database:      "",
-			table:         "samples",
-			errorContains: "invalid database name",
-		},
-		{
-			name:          "empty table name",
-			database:      "k6",
-			table:         "",
-			errorContains: "invalid table name",
-		},
-	}
-
-	ctx := context.Background()
-
-	for _, s := range schemas {
-		for _, tt := range tests {
-			t.Run(s.name+"/"+tt.name, func(t *testing.T) {
-				t.Parallel()
-
-				err := s.schema.CreateSchema(ctx, &sql.DB{}, tt.database, tt.table)
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorContains)
-			})
-		}
-	}
+// compatColumns lists the compatible schema's columns in InsertQuery order.
+var compatColumns = []string{
+	"timestamp", "metric", "metric_type", "value",
+	"testid", "release", "scenario", "build_id", "version", "branch",
+	"name", "method", "status", "expected_response", "error_code",
+	"rating", "resource_type", "ui_feature", "check_name", "group_name",
+	"extra_tags",
 }
 
-// TestSchema_InsertQuery consolidates insert query tests for both schemas.
-func TestSchema_InsertQuery(t *testing.T) {
+// compatRow converts sample with the compatible schema (default build ID 12345)
+// and returns the row keyed by column name.
+func compatRow(t *testing.T, sample metrics.Sample) map[string]any {
+	t.Helper()
+
+	row, err := compatSchema{defaultBuildID: 12345}.Row(sample)
+	require.NoError(t, err)
+	require.Len(t, row, len(compatColumns))
+
+	cols := make(map[string]any, len(row))
+	for i, name := range compatColumns {
+		cols[name] = row[i]
+	}
+	return cols
+}
+
+// TestSchema_Queries checks both schemas' DDL and INSERT statements target the
+// given table, and that the INSERT column order matches the Row layout.
+func TestSchema_Queries(t *testing.T) {
 	t.Parallel()
 
 	schemas := []struct {
-		name            string
-		schema          interface{ InsertQuery(string, string) string }
-		expectedColumns []string
+		name    string
+		schema  Schema
+		columns []string
 	}{
-		{
-			name:            "simple",
-			schema:          &SimpleSchema{},
-			expectedColumns: []string{"timestamp", "metric", "value", "tags"},
-		},
-		{
-			name:   "compatible",
-			schema: &CompatibleSchema{},
-			expectedColumns: []string{
-				"timestamp", "metric", "metric_type", "value",
-				"testid", "release", "scenario", "build_id", "extra_tags",
-			},
-		},
+		{"simple", simpleSchema{}, []string{"timestamp", "metric", "value", "tags"}},
+		{"compatible", compatSchema{}, compatColumns},
 	}
 
 	nameCases := []struct {
@@ -109,19 +64,24 @@ func TestSchema_InsertQuery(t *testing.T) {
 			t.Run(s.name+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
 
-				query := s.schema.InsertQuery(tt.database, tt.table)
+				table := escapeIdentifier(tt.database) + "." + escapeIdentifier(tt.table)
+				want := fmt.Sprintf("`%s`.`%s`", tt.database, tt.table)
 
-				assert.Contains(t, query, "INSERT INTO")
-				assert.Contains(t, query, fmt.Sprintf("`%s`.`%s`", tt.database, tt.table))
-				for _, col := range s.expectedColumns {
-					assert.Contains(t, query, col)
-				}
+				ddl := s.schema.CreateTable(table)
+				assert.Contains(t, ddl, "CREATE TABLE IF NOT EXISTS "+want)
+				assert.Contains(t, ddl, "DateTime64(3")
+
+				// Collapse whitespace so the multi-line column list compares as one string.
+				query := strings.Join(strings.Fields(s.schema.InsertQuery(table)), " ")
+				assert.Contains(t, query, "INSERT INTO "+want)
+				assert.Contains(t, query, strings.Join(s.columns, ", "))
+				assert.Equal(t, len(s.columns), strings.Count(query, "?"))
 			})
 		}
 	}
 }
 
-func TestConvertToSimple(t *testing.T) {
+func TestSimpleSchema_Row(t *testing.T) {
 	t.Parallel()
 
 	registry := metrics.NewRegistry()
@@ -129,7 +89,7 @@ func TestConvertToSimple(t *testing.T) {
 	tests := []struct {
 		name        string
 		setupSample func() metrics.Sample
-		checkResult func(t *testing.T, ss simpleSample)
+		checkResult func(t *testing.T, row []any)
 	}{
 		{
 			name: "sample with nil tags",
@@ -144,11 +104,10 @@ func TestConvertToSimple(t *testing.T) {
 					Value: 123.45,
 				}
 			},
-			checkResult: func(t *testing.T, ss simpleSample) {
-				assert.Equal(t, "http_reqs", ss.Metric)
-				assert.Equal(t, 123.45, ss.Value)
-				assert.NotNil(t, ss.Tags, "Tags should not be nil")
-				assert.Equal(t, 0, len(ss.Tags), "Tags should be empty")
+			checkResult: func(t *testing.T, row []any) {
+				assert.Equal(t, "http_reqs", row[1])
+				assert.Equal(t, 123.45, row[2])
+				assert.Equal(t, map[string]string{}, row[3], "Tags should be an empty, non-nil map")
 			},
 		},
 		{
@@ -169,12 +128,14 @@ func TestConvertToSimple(t *testing.T) {
 					Value: 234.56,
 				}
 			},
-			checkResult: func(t *testing.T, ss simpleSample) {
-				assert.Equal(t, "http_req_duration", ss.Metric)
-				assert.Equal(t, 234.56, ss.Value)
-				assert.Equal(t, "GET", ss.Tags["method"])
-				assert.Equal(t, "200", ss.Tags["status"])
-				assert.Equal(t, "/api/users", ss.Tags["endpoint"])
+			checkResult: func(t *testing.T, row []any) {
+				assert.Equal(t, "http_req_duration", row[1])
+				assert.Equal(t, 234.56, row[2])
+				assert.Equal(t, map[string]string{
+					"method":   "GET",
+					"status":   "200",
+					"endpoint": "/api/users",
+				}, row[3])
 			},
 		},
 		{
@@ -190,9 +151,9 @@ func TestConvertToSimple(t *testing.T) {
 					Value: 0.0,
 				}
 			},
-			checkResult: func(t *testing.T, ss simpleSample) {
-				assert.Equal(t, "errors", ss.Metric)
-				assert.Equal(t, 0.0, ss.Value)
+			checkResult: func(t *testing.T, row []any) {
+				assert.Equal(t, "errors", row[1])
+				assert.Equal(t, 0.0, row[2])
 			},
 		},
 	}
@@ -202,50 +163,17 @@ func TestConvertToSimple(t *testing.T) {
 			t.Parallel()
 
 			sample := tt.setupSample()
-			result := convertToSimple(sample)
+			row, err := simpleSchema{}.Row(sample)
+			require.NoError(t, err)
+			require.Len(t, row, 4)
 
-			tt.checkResult(t, result)
-			assert.Equal(t, sample.Time, result.Timestamp)
+			assert.Equal(t, sample.Time, row[0])
+			tt.checkResult(t, row)
 		})
 	}
 }
 
-func TestSimpleConverter_Convert(t *testing.T) {
-	t.Parallel()
-
-	registry := metrics.NewRegistry()
-	converter := SimpleConverter{}
-	ctx := context.Background()
-
-	metric := registry.MustNewMetric("http_reqs", metrics.Counter)
-	tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
-		"method": "GET",
-		"status": "200",
-	})
-	now := time.Now()
-	sample := metrics.Sample{
-		TimeSeries: metrics.TimeSeries{
-			Metric: metric,
-			Tags:   tags,
-		},
-		Time:  now,
-		Value: 1.0,
-	}
-
-	row, err := converter.Convert(ctx, sample)
-	assert.NoError(t, err)
-	assert.Len(t, row, 4)
-	assert.Equal(t, now, row[0])
-	assert.Equal(t, "http_reqs", row[1])
-	assert.Equal(t, 1.0, row[2])
-
-	tagsMap, ok := row[3].(map[string]string)
-	assert.True(t, ok)
-	assert.Equal(t, "GET", tagsMap["method"])
-	assert.Equal(t, "200", tagsMap["status"])
-}
-
-func TestConvertToCompatible(t *testing.T) {
+func TestCompatSchema_Row(t *testing.T) {
 	t.Parallel()
 
 	registry := metrics.NewRegistry()
@@ -267,10 +195,9 @@ func TestConvertToCompatible(t *testing.T) {
 			Value: 1.0,
 		}
 
-		cs, err := convertToCompatible(sample, 12345)
-		assert.NoError(t, err)
-		assert.Equal(t, uint32(123), cs.BuildID)
-		assert.Equal(t, uint16(200), cs.Status)
+		cols := compatRow(t, sample)
+		assert.Equal(t, uint32(123), cols["build_id"])
+		assert.Equal(t, uint16(200), cols["status"])
 	})
 
 	t.Run("invalid buildId", func(t *testing.T) {
@@ -289,9 +216,11 @@ func TestConvertToCompatible(t *testing.T) {
 			Value: 1.0,
 		}
 
-		_, err := convertToCompatible(sample, 12345)
-		assert.Error(t, err)
+		row, err := compatSchema{defaultBuildID: 12345}.Row(sample)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse buildId")
+		assert.Contains(t, err.Error(), `"invalid"`)
+		assert.Nil(t, row)
 	})
 
 	t.Run("invalid status", func(t *testing.T) {
@@ -310,21 +239,52 @@ func TestConvertToCompatible(t *testing.T) {
 			Value: 1.0,
 		}
 
-		_, err := convertToCompatible(sample, 12345)
-		assert.Error(t, err)
+		row, err := compatSchema{defaultBuildID: 12345}.Row(sample)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse status")
+		assert.Nil(t, row)
+	})
+
+	t.Run("empty typed tags fail to parse", func(t *testing.T) {
+		t.Parallel()
+
+		for _, key := range []string{"buildId", "status"} {
+			sample := metrics.Sample{
+				TimeSeries: metrics.TimeSeries{
+					Metric: registry.MustNewMetric("http_reqs", metrics.Counter),
+					Tags:   registry.RootTagSet().WithTagsFromMap(map[string]string{key: ""}),
+				},
+				Time:  time.Now(),
+				Value: 1.0,
+			}
+
+			_, err := compatSchema{defaultBuildID: 12345}.Row(sample)
+			assert.ErrorContains(t, err, "failed to parse "+key)
+		}
 	})
 }
 
-func TestConvertToCompatibleEdgeCases(t *testing.T) {
+func TestCompatSchema_RowEdgeCases(t *testing.T) {
 	t.Parallel()
 
 	registry := metrics.NewRegistry()
+	withTags := func(tags map[string]string) func() metrics.Sample {
+		return func() metrics.Sample {
+			return metrics.Sample{
+				TimeSeries: metrics.TimeSeries{
+					Metric: registry.MustNewMetric("http_reqs", metrics.Counter),
+					Tags:   registry.RootTagSet().WithTagsFromMap(tags),
+				},
+				Time:  time.Now(),
+				Value: 1.0,
+			}
+		}
+	}
 
 	tests := []struct {
 		name        string
 		setupSample func() metrics.Sample
-		checkResult func(t *testing.T, cs compatibleSample, err error)
+		checkResult func(t *testing.T, cols map[string]any)
 	}{
 		{
 			name: "sample with no tags - uses defaults",
@@ -339,12 +299,14 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, "default", cs.TestID)
-				assert.Equal(t, "master", cs.Branch)
-				assert.NotZero(t, cs.BuildID)
-				assert.True(t, cs.ExpectedResponse)
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "default", cols["testid"])
+				assert.Equal(t, "master", cols["branch"])
+				assert.Equal(t, uint32(12345), cols["build_id"])
+				assert.Equal(t, true, cols["expected_response"])
+				assert.Equal(t, uint16(0), cols["status"])
+				assert.Equal(t, int8(1), cols["metric_type"])
+				assert.Equal(t, map[string]string{}, cols["extra_tags"])
 			},
 		},
 		{
@@ -363,9 +325,8 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, "run-123", cs.TestID)
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "run-123", cols["testid"])
 			},
 		},
 		{
@@ -384,9 +345,8 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.False(t, cs.ExpectedResponse)
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, false, cols["expected_response"])
 			},
 		},
 		{
@@ -406,10 +366,8 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, "value1", cs.ExtraTags["custom1"])
-				assert.Equal(t, "value2", cs.ExtraTags["custom2"])
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, map[string]string{"custom1": "value1", "custom2": "value2"}, cols["extra_tags"])
 			},
 		},
 		{
@@ -428,10 +386,9 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, "jobs", cs.UIFeature)
-				assert.NotContains(t, cs.ExtraTags, "uiFeature")
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "jobs", cols["ui_feature"])
+				assert.NotContains(t, cols["extra_tags"], "uiFeature")
 			},
 		},
 		{
@@ -451,11 +408,10 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, "snake", cs.UIFeature)
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "snake", cols["ui_feature"])
 				// camelCase falls through to extra_tags since snake_case was consumed
-				assert.Equal(t, "camel", cs.ExtraTags["uiFeature"])
+				assert.Equal(t, map[string]string{"uiFeature": "camel"}, cols["extra_tags"])
 			},
 		},
 		{
@@ -474,10 +430,9 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, "my check name", cs.CheckName)
-				assert.NotContains(t, cs.ExtraTags, "check")
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "my check name", cols["check_name"])
+				assert.NotContains(t, cols["extra_tags"], "check")
 			},
 		},
 		{
@@ -496,10 +451,9 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, "fallback check", cs.CheckName)
-				assert.NotContains(t, cs.ExtraTags, "check_name")
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "fallback check", cols["check_name"])
+				assert.NotContains(t, cols["extra_tags"], "check_name")
 			},
 		},
 		{
@@ -518,9 +472,47 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 					Value: 1.0,
 				}
 			},
-			checkResult: func(t *testing.T, cs compatibleSample, err error) {
-				assert.NoError(t, err)
-				assert.Equal(t, uint32(4294967295), cs.BuildID)
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, uint32(4294967295), cols["build_id"])
+			},
+		},
+		{
+			name:        "buildId zero falls back to default",
+			setupSample: withTags(map[string]string{"buildId": "0"}),
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, uint32(12345), cols["build_id"])
+				assert.Equal(t, map[string]string{}, cols["extra_tags"])
+			},
+		},
+		{
+			name:        "expected_response other than true is false",
+			setupSample: withTags(map[string]string{"expected_response": "yes"}),
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, false, cols["expected_response"])
+			},
+		},
+		{
+			name:        "check takes precedence over check_name",
+			setupSample: withTags(map[string]string{"check": "native", "check_name": "alias"}),
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "native", cols["check_name"])
+				assert.Equal(t, map[string]string{"check_name": "alias"}, cols["extra_tags"])
+			},
+		},
+		{
+			name:        "group_name takes precedence over group",
+			setupSample: withTags(map[string]string{"group_name": "explicit", "group": "::g"}),
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "explicit", cols["group_name"])
+				assert.Equal(t, map[string]string{"group": "::g"}, cols["extra_tags"])
+			},
+		},
+		{
+			name:        "group alias fallback",
+			setupSample: withTags(map[string]string{"group": "::g"}),
+			checkResult: func(t *testing.T, cols map[string]any) {
+				assert.Equal(t, "::g", cols["group_name"])
+				assert.Equal(t, map[string]string{}, cols["extra_tags"])
 			},
 		},
 	}
@@ -529,105 +521,50 @@ func TestConvertToCompatibleEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			sample := tt.setupSample()
-			result, err := convertToCompatible(sample, 12345)
-
-			tt.checkResult(t, result, err)
+			tt.checkResult(t, compatRow(t, tt.setupSample()))
 		})
 	}
 }
 
-func TestCompatibleConverter_Convert(t *testing.T) {
+func TestCompatSchema_RowLayout(t *testing.T) {
 	t.Parallel()
 
 	registry := metrics.NewRegistry()
-	converter := CompatibleConverter{}
-	ctx := context.Background()
-
-	t.Run("convert returns correct row format", func(t *testing.T) {
-		t.Parallel()
-
-		metric := registry.MustNewMetric("http_reqs", metrics.Counter)
-		tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
-			"method":  "GET",
-			"status":  "200",
-			"testid":  "test-123",
-			"buildId": "456",
-		})
-		now := time.Now()
-		sample := metrics.Sample{
-			TimeSeries: metrics.TimeSeries{
-				Metric: metric,
-				Tags:   tags,
-			},
-			Time:  now,
-			Value: 1.0,
-		}
-
-		row, err := converter.Convert(ctx, sample)
-		assert.NoError(t, err)
-		assert.Len(t, row, 21)
-
-		assert.Equal(t, now, row[0])
-		assert.Equal(t, "http_reqs", row[1])
-		assert.Equal(t, int8(1), row[2])
-		assert.Equal(t, 1.0, row[3])
-		assert.Equal(t, "test-123", row[4])
-		assert.Equal(t, uint32(456), row[7])
-		assert.Equal(t, "GET", row[11])
-		assert.Equal(t, uint16(200), row[12])
-		assert.Equal(t, true, row[13])
+	metric := registry.MustNewMetric("http_reqs", metrics.Counter)
+	tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
+		"method":  "GET",
+		"status":  "200",
+		"testid":  "test-123",
+		"buildId": "456",
 	})
+	now := time.Now()
+	sample := metrics.Sample{
+		TimeSeries: metrics.TimeSeries{
+			Metric: metric,
+			Tags:   tags,
+		},
+		Time:  now,
+		Value: 1.0,
+	}
 
-	t.Run("convert error returns nil row", func(t *testing.T) {
-		t.Parallel()
+	row, err := compatSchema{}.Row(sample)
+	require.NoError(t, err)
+	assert.Len(t, row, 21)
 
-		metric := registry.MustNewMetric("http_reqs", metrics.Counter)
-		tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
-			"buildId": "invalid",
-		})
-		sample := metrics.Sample{
-			TimeSeries: metrics.TimeSeries{
-				Metric: metric,
-				Tags:   tags,
-			},
-			Time:  time.Now(),
-			Value: 1.0,
-		}
-
-		row, err := converter.Convert(ctx, sample)
-		assert.Error(t, err)
-		assert.Nil(t, row)
-	})
-}
-
-func TestCompatibleSchema_ErrorWrapping(t *testing.T) {
-	t.Parallel()
-
-	t.Run("database creation error is properly wrapped", func(t *testing.T) {
-		t.Parallel()
-
-		baseErr := errors.New("connection timeout")
-		wrappedErr := fmt.Errorf("failed to create database: %w", baseErr)
-
-		assert.Contains(t, wrappedErr.Error(), "failed to create database")
-		assert.ErrorIs(t, wrappedErr, baseErr)
-	})
-
-	t.Run("table creation error is properly wrapped", func(t *testing.T) {
-		t.Parallel()
-
-		baseErr := errors.New("syntax error")
-		wrappedErr := fmt.Errorf("failed to create table: %w", baseErr)
-
-		assert.Contains(t, wrappedErr.Error(), "failed to create table")
-		assert.ErrorIs(t, wrappedErr, baseErr)
-	})
+	assert.Equal(t, now, row[0])
+	assert.Equal(t, "http_reqs", row[1])
+	assert.Equal(t, int8(1), row[2])
+	assert.Equal(t, 1.0, row[3])
+	assert.Equal(t, "test-123", row[4])
+	assert.Equal(t, uint32(456), row[7])
+	assert.Equal(t, "GET", row[11])
+	assert.Equal(t, uint16(200), row[12])
+	assert.Equal(t, true, row[13])
 }
 
 // Benchmarks
 
-func BenchmarkConvertToSimple(b *testing.B) {
+func BenchmarkSimpleSchema_Row(b *testing.B) {
 	registry := metrics.NewRegistry()
 	metric := registry.MustNewMetric("http_req_duration", metrics.Trend)
 	tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
@@ -646,12 +583,13 @@ func BenchmarkConvertToSimple(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		ss := convertToSimple(sample)
-		_ = ss
+		if _, err := (simpleSchema{}).Row(sample); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-func BenchmarkConvertToCompatible(b *testing.B) {
+func BenchmarkCompatSchema_Row(b *testing.B) {
 	registry := metrics.NewRegistry()
 	metric := registry.MustNewMetric("http_reqs", metrics.Counter)
 	tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
@@ -669,12 +607,12 @@ func BenchmarkConvertToCompatible(b *testing.B) {
 		Value: 1.0,
 	}
 
+	schema := compatSchema{defaultBuildID: 12345}
+
 	b.ResetTimer()
 	for b.Loop() {
-		cs, err := convertToCompatible(sample, 12345)
-		if err != nil {
+		if _, err := schema.Row(sample); err != nil {
 			b.Fatal(err)
 		}
-		_ = cs
 	}
 }

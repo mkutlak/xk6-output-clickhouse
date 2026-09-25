@@ -191,6 +191,8 @@ func TestConfig_Validate(t *testing.T) {
 		{"invalid database", func(c *Config) { c.Database = "bad-name!" }, "invalid database name"},
 		{"empty table", func(c *Config) { c.Table = "" }, "table name is required"},
 		{"invalid table", func(c *Config) { c.Table = "bad table" }, "invalid table name"},
+		{"database with SQL injection", func(c *Config) { c.Database = "k6'; DROP TABLE samples; --" }, "invalid database name"},
+		{"table with SQL injection", func(c *Config) { c.Table = "samples'; DROP DATABASE k6; --" }, "invalid table name"},
 		{"non-positive push interval", func(c *Config) { c.PushInterval = 0 }, "push interval must be positive"},
 		{"invalid schema mode", func(c *Config) { c.SchemaMode = "nope" }, "invalid schemaMode"},
 		{"negative retry delay", func(c *Config) { c.RetryDelay = -1 }, "retry delay must be non-negative"},

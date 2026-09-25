@@ -16,7 +16,7 @@ import (
 // TestIntegration_ClickHouse_CompatibleSchema exercises the 21-column compatible
 // schema end-to-end against real ClickHouse: the typed/codec DDL, the Enum8
 // metric_type mapping, tag extraction with type coercion (build_id/status), and
-// the converter-applied defaults (testid='default', non-zero build_id) for a
+// the Row-applied defaults (testid='default', non-zero build_id) for a
 // sample that carries no tags.
 func TestIntegration_ClickHouse_CompatibleSchema(t *testing.T) {
 	endpoint, cleanup := StartClickHouseContainer(t)
@@ -69,7 +69,7 @@ func TestIntegration_ClickHouse_CompatibleSchema(t *testing.T) {
 		Value: 7,
 	}
 
-	// Sample 2: a Trend with no tags — exercises converter defaults.
+	// Sample 2: a Trend with no tags — exercises Row defaults.
 	trend := registry.MustNewMetric("compat_defaults", metrics.Trend)
 	bare := metrics.Sample{
 		TimeSeries: metrics.TimeSeries{Metric: trend},
@@ -118,8 +118,8 @@ func TestIntegration_ClickHouse_CompatibleSchema(t *testing.T) {
 		assert.Equal(t, "kept", extraTags["custom_label"], "unrecognized tags land in extra_tags")
 	})
 
-	// Verify the bare Trend row uses converter-applied defaults.
-	t.Run("bare trend uses converter defaults", func(t *testing.T) {
+	// Verify the bare Trend row uses Row-applied defaults.
+	t.Run("bare trend uses Row defaults", func(t *testing.T) {
 		var (
 			metricType string
 			testID     string
