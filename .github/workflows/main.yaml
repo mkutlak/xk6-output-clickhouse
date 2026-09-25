@@ -64,13 +64,15 @@ jobs:
         uses: cycjimmy/semantic-release-action@v6
         with:
           semantic_version: 25.0.9
+          # The preset stays on v9: v10 needs conventional-changelog-writer@9, but
+          # @semantic-release/release-notes-generator 14.x still ships writer@8.
           extra_plugins: |
             @semantic-release/commit-analyzer
             @semantic-release/release-notes-generator
             @semantic-release/changelog
             @semantic-release/git
             @semantic-release/github
-            conventional-changelog-conventionalcommits
+            conventional-changelog-conventionalcommits@9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
