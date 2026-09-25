@@ -263,3 +263,8 @@ the single `Schema` interface above.
 rather than k6's internal sample containers (each container previously held
 around 8 samples for a typical HTTP request), so the default rose from
 `10000` to `100000` to keep roughly the same real buffering capacity.
+
+Configuration is stricter too: an unknown `--out` query parameter or JSON key
+now fails at startup instead of being ignored, and the `--out` argument only
+accepts the `clickhouse://` scheme (or none). See
+[Configuration](./configuration.md).
