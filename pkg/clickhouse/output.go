@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -51,6 +52,12 @@ type Output struct {
 	periodicFlusher *output.PeriodicFlusher
 	insertQuery     string // Pre-computed INSERT query
 
+	// table is the quoted `database`.`table` identifier, computed once in New.
+	table string
+
+	// tlsConfig is built once in New from config.TLS; nil when TLS is disabled.
+	tlsConfig *tls.Config
+
 	// Schema selected by the schemaMode config
 	schema Schema
 
@@ -90,10 +97,31 @@ func New(params output.Params) (output.Output, error) {
 		logger.Warnf("Ignoring unknown environment variables: %s", strings.Join(unknown, ", "))
 	}
 
-	return &Output{
-		config: cfg,
-		logger: logger,
-	}, nil
+	// Resolve everything config-derived once, so Start (and any config-only
+	// inspection before it) never re-reads TLS files or re-looks-up the schema.
+	schema, err := getSchema(cfg.SchemaMode)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsConfig, err := cfg.TLS.BuildTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("invalid TLS configuration: %w", err)
+	}
+
+	table := escapeIdentifier(cfg.Database) + "." + escapeIdentifier(cfg.Table)
+
+	o := &Output{
+		config:      cfg,
+		logger:      logger,
+		schema:      schema,
+		tlsConfig:   tlsConfig,
+		table:       table,
+		insertQuery: schema.InsertQuery(table),
+	}
+	o.logTLSStatus()
+
+	return o, nil
 }
 
 // Description returns a human-readable description
@@ -105,13 +133,6 @@ func (o *Output) Description() string {
 // Start connects to ClickHouse, creates the schema unless skipped, and starts
 // the periodic flusher.
 func (o *Output) Start() (err error) {
-	tlsConfig, err := o.config.TLS.BuildTLSConfig()
-	if err != nil {
-		return fmt.Errorf("failed to build TLS config: %w", err)
-	}
-
-	o.logTLSStatus()
-
 	// Connect to ClickHouse without specifying database in auth.
 	// This allows CREATE DATABASE IF NOT EXISTS to work when the target database doesn't exist.
 	// All queries use fully-qualified table names ({database}.{table}), so no default database is needed.
@@ -121,7 +142,7 @@ func (o *Output) Start() (err error) {
 			Username: o.config.User,
 			Password: o.config.Password,
 		},
-		TLS: tlsConfig,
+		TLS: o.tlsConfig,
 	})
 	defer func() {
 		if err != nil {
@@ -137,26 +158,17 @@ func (o *Output) Start() (err error) {
 			o.config.Addr, err)
 	}
 
-	schema, err := getSchema(o.config.SchemaMode)
-	if err != nil {
-		return fmt.Errorf("failed to get schema implementation: %w", err)
-	}
-
-	table := escapeIdentifier(o.config.Database) + "." + escapeIdentifier(o.config.Table)
-
 	if !o.config.SkipSchemaCreation {
 		if _, err := db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+escapeIdentifier(o.config.Database)); err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
 		}
-		if _, err := db.ExecContext(ctx, schema.CreateTable(table)); err != nil {
+		if _, err := db.ExecContext(ctx, o.schema.CreateTable(o.table)); err != nil {
 			return fmt.Errorf("failed to create table: %w", err)
 		}
 	}
 
-	// Everything flush reads must be set before the flusher goroutine starts.
+	// The flusher goroutine reads o.db; it must be set before it starts.
 	o.db = db
-	o.schema = schema
-	o.insertQuery = schema.InsertQuery(table)
 
 	pf, err := output.NewPeriodicFlusher(o.config.PushInterval, o.flush)
 	if err != nil {
@@ -179,7 +191,8 @@ func (o *Output) Start() (err error) {
 
 // logTLSStatus logs warnings about the TLS configuration: using the plaintext
 // port with TLS, verification being disabled, and TLS material that will be
-// silently ignored. Extracted from Start() to keep its complexity in check.
+// silently ignored. Called from New so these surface as soon as the output is
+// constructed, before Start attempts a connection.
 func (o *Output) logTLSStatus() {
 	if !o.config.TLS.Enabled {
 		// Surface silently-ignored TLS material so a forgotten tlsEnabled doesn't

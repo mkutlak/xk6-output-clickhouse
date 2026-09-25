@@ -328,61 +328,6 @@ func TestTLSConfig_BuildTLSConfig_CompleteConfiguration(t *testing.T) {
 	assert.Equal(t, "clickhouse.example.com", result.ServerName)
 }
 
-func TestValidateFileReadable(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty path", func(t *testing.T) {
-		t.Parallel()
-
-		err := validateFileReadable("")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "file path is empty")
-	})
-
-	t.Run("nonexistent file", func(t *testing.T) {
-		t.Parallel()
-
-		err := validateFileReadable("/nonexistent/file.txt")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "file does not exist")
-	})
-
-	t.Run("directory instead of file", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		err := validateFileReadable(dir)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "path is a directory")
-	})
-
-	t.Run("valid readable file", func(t *testing.T) {
-		t.Parallel()
-
-		file := filepath.Join(t.TempDir(), "test.txt")
-		err := os.WriteFile(file, []byte("test content"), 0o644)
-		require.NoError(t, err)
-
-		err = validateFileReadable(file)
-		assert.NoError(t, err)
-	})
-
-	t.Run("unreadable file", func(t *testing.T) {
-		t.Parallel()
-
-		file := filepath.Join(t.TempDir(), "unreadable.txt")
-		err := os.WriteFile(file, []byte("test content"), 0o000)
-		require.NoError(t, err)
-
-		err = validateFileReadable(file)
-		// Note: This test may behave differently depending on OS and permissions
-		// On some systems (like when running as root), the file may still be readable
-		if err != nil {
-			assert.Contains(t, err.Error(), "file is not readable")
-		}
-	})
-}
-
 // TLS Config Parsing Tests (from config sources)
 
 func TestParseConfig_TLS_JSON(t *testing.T) {
@@ -524,98 +469,65 @@ func TestParseConfig_TLS_Priority(t *testing.T) {
 	})
 }
 
-func TestConfig_Validate_TLSConfiguration(t *testing.T) {
+func TestTLSConfig_BuildTLSConfig_CertWithoutKey(t *testing.T) {
 	t.Parallel()
 
-	t.Run("TLS disabled passes validation", func(t *testing.T) {
-		t.Parallel()
+	tlsConfig := TLSConfig{
+		Enabled:  true,
+		CertFile: testClientCert,
+	}
 
-		cfg := NewConfig()
-		cfg.TLS.Enabled = false
+	result, err := tlsConfig.BuildTLSConfig()
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "TLS client certificate and key must be specified together")
+}
 
-		err := cfg.Validate()
-		assert.NoError(t, err)
-	})
+func TestTLSConfig_BuildTLSConfig_KeyWithoutCert(t *testing.T) {
+	t.Parallel()
 
-	t.Run("TLS enabled without files passes validation", func(t *testing.T) {
-		t.Parallel()
+	tlsConfig := TLSConfig{
+		Enabled: true,
+		KeyFile: testClientKey,
+	}
 
-		cfg := NewConfig()
-		cfg.TLS.Enabled = true
+	result, err := tlsConfig.BuildTLSConfig()
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "TLS client certificate and key must be specified together")
+}
 
-		err := cfg.Validate()
-		assert.NoError(t, err)
-	})
+func TestTLSConfig_BuildTLSConfig_CADirectory(t *testing.T) {
+	t.Parallel()
 
-	t.Run("TLS with valid CA file passes validation", func(t *testing.T) {
-		t.Parallel()
+	tlsConfig := TLSConfig{
+		Enabled: true,
+		CAFile:  t.TempDir(),
+	}
 
-		cfg := NewConfig()
-		cfg.TLS.Enabled = true
-		cfg.TLS.CAFile = testCACertFile
+	result, err := tlsConfig.BuildTLSConfig()
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to read CA certificate file")
+}
 
-		err := cfg.Validate()
-		assert.NoError(t, err)
-	})
+func TestTLSConfig_BuildTLSConfig_UnreadableCAFile(t *testing.T) {
+	t.Parallel()
 
-	t.Run("TLS with invalid CA file fails validation", func(t *testing.T) {
-		t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions do not restrict reads")
+	}
 
-		cfg := NewConfig()
-		cfg.TLS.Enabled = true
-		cfg.TLS.CAFile = "/nonexistent/ca.pem"
+	file := filepath.Join(t.TempDir(), "unreadable-ca.pem")
+	require.NoError(t, os.WriteFile(file, []byte("test content"), 0o000))
 
-		err := cfg.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "TLS CA file validation failed")
-	})
+	tlsConfig := TLSConfig{
+		Enabled: true,
+		CAFile:  file,
+	}
 
-	t.Run("TLS with valid client certificate passes validation", func(t *testing.T) {
-		t.Parallel()
-
-		cfg := NewConfig()
-		cfg.TLS.Enabled = true
-		cfg.TLS.CertFile = testClientCert
-		cfg.TLS.KeyFile = testClientKey
-
-		err := cfg.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("TLS with cert but no key fails validation", func(t *testing.T) {
-		t.Parallel()
-
-		cfg := NewConfig()
-		cfg.TLS.Enabled = true
-		cfg.TLS.CertFile = testClientCert
-
-		err := cfg.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "TLS client certificate and key must be specified together")
-	})
-
-	t.Run("TLS with key but no cert fails validation", func(t *testing.T) {
-		t.Parallel()
-
-		cfg := NewConfig()
-		cfg.TLS.Enabled = true
-		cfg.TLS.KeyFile = testClientKey
-
-		err := cfg.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "TLS client certificate and key must be specified together")
-	})
-
-	t.Run("TLS with invalid cert file fails validation", func(t *testing.T) {
-		t.Parallel()
-
-		cfg := NewConfig()
-		cfg.TLS.Enabled = true
-		cfg.TLS.CertFile = "/nonexistent/cert.pem"
-		cfg.TLS.KeyFile = "/nonexistent/key.pem"
-
-		err := cfg.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "TLS client certificate file validation failed")
-	})
+	result, err := tlsConfig.BuildTLSConfig()
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to read CA certificate file")
 }

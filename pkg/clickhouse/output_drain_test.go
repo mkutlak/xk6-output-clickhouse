@@ -50,7 +50,6 @@ func TestStop_DrainsPendingAndAccountsLoss(t *testing.T) {
 	out, err := New(params)
 	require.NoError(t, err)
 	o := out.(*Output)
-	o.schema = simpleSchema{}
 
 	// Simulate samples buffered during a prior outage. db is nil, so the drain
 	// has nowhere to write them, exercising the loss accounting.
@@ -78,7 +77,6 @@ func TestFlush_FailureBuffersSamples(t *testing.T) {
 	t.Parallel()
 
 	o := newTestOutput(t)
-	o.schema = simpleSchema{}
 
 	o.AddMetricSamples([]metrics.SampleContainer{makeSamples(t, 1, 2), makeSamples(t, 3)})
 	o.flush()
@@ -104,7 +102,6 @@ func TestFlush_BufferOverflowDropsSamples(t *testing.T) {
 	t.Parallel()
 
 	o := newTestOutput(t, map[string]any{"bufferMaxSamples": 2, "bufferDropPolicy": dropOldest})
-	o.schema = simpleSchema{}
 
 	o.AddMetricSamples([]metrics.SampleContainer{makeSamples(t, 1, 2, 3)})
 	o.flush()
@@ -118,7 +115,6 @@ func TestFlush_BufferingDisabledDropsSamples(t *testing.T) {
 	t.Parallel()
 
 	o := newTestOutput(t, map[string]any{"bufferEnabled": false})
-	o.schema = simpleSchema{}
 
 	o.AddMetricSamples([]metrics.SampleContainer{makeSamples(t, 1, 2, 3)})
 	o.flush()
