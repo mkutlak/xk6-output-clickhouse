@@ -97,7 +97,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "url config with scheme",
 			params: output.Params{
-				ConfigArgument: "http://clickhouse.example.com:9000",
+				ConfigArgument: "clickhouse://clickhouse.example.com:9000",
 			},
 			expectedConfig: Config{
 				Addr:         "clickhouse.example.com:9000",
@@ -275,6 +275,134 @@ func TestParseConfig_EdgeCases(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid --out argument")
 	})
+}
+
+func TestApplyArgument(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		arg  string
+
+		wantErr        bool
+		errContains    string
+		errNotContains string
+		wantAddr       string
+		wantUser       string
+		wantPassword   string
+		wantDatabase   string
+	}{
+		{
+			name:         "DSN with userinfo and path",
+			arg:          "clickhouse://alice:s3cret@dbhost:9000/analytics",
+			wantAddr:     "dbhost:9000",
+			wantUser:     "alice",
+			wantPassword: "s3cret",
+			wantDatabase: "analytics",
+		},
+		{
+			name:         "bare host:port/db",
+			arg:          "dbhost:9000/analytics",
+			wantAddr:     "dbhost:9000",
+			wantUser:     "default",
+			wantDatabase: "analytics",
+		},
+		{
+			name:         "bare host:port still works",
+			arg:          "dbhost:9000",
+			wantAddr:     "dbhost:9000",
+			wantUser:     "default",
+			wantDatabase: "k6",
+		},
+		{
+			name:         "query overrides path and userinfo",
+			arg:          "clickhouse://alice:s3cret@dbhost:9000/analytics?user=bob&password=other&database=metrics",
+			wantAddr:     "dbhost:9000",
+			wantUser:     "bob",
+			wantPassword: "other",
+			wantDatabase: "metrics",
+		},
+		{
+			name:         "percent-encoded password",
+			arg:          "clickhouse://alice:p%40ss%23@dbhost:9000",
+			wantAddr:     "dbhost:9000",
+			wantUser:     "alice",
+			wantPassword: "p@ss#",
+			wantDatabase: "k6",
+		},
+		{
+			name:        "fragment rejected",
+			arg:         "clickhouse://dbhost:9000/analytics#frag",
+			wantErr:     true,
+			errContains: "%23",
+		},
+		{
+			name:           "malformed path keeps password out of error",
+			arg:            "clickhouse://alice:s3cretpw@dbhost:9000/%zz",
+			wantErr:        true,
+			errNotContains: "s3cretpw",
+		},
+		{
+			name:           "invalid port keeps password out of error",
+			arg:            "clickhouse://alice:s3cretpw@dbhost:abc",
+			wantErr:        true,
+			errNotContains: "s3cretpw",
+		},
+		{
+			name:        "unsupported scheme",
+			arg:         "http://dbhost:9000",
+			wantErr:     true,
+			errContains: `unsupported scheme "http"`,
+		},
+		{
+			name:         "IPv6 host",
+			arg:          "clickhouse://alice:s3cret@[::1]:9000/analytics",
+			wantAddr:     "[::1]:9000",
+			wantUser:     "alice",
+			wantPassword: "s3cret",
+			wantDatabase: "analytics",
+		},
+		{
+			name:     "bare IPv6 host:port still works",
+			arg:      "[::1]:9000",
+			wantAddr: "[::1]:9000",
+			wantUser: "default",
+		},
+		{
+			name:        "multi-segment path rejected",
+			arg:         "clickhouse://dbhost:9000/db/extra",
+			wantErr:     true,
+			errContains: "single database segment",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := NewConfig()
+			err := cfg.applyArgument(tt.arg)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				if tt.errNotContains != "" {
+					assert.NotContains(t, err.Error(), tt.errNotContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantAddr, cfg.Addr)
+			assert.Equal(t, tt.wantUser, cfg.User)
+			assert.Equal(t, tt.wantPassword, cfg.Password)
+			if tt.wantDatabase != "" {
+				assert.Equal(t, tt.wantDatabase, cfg.Database)
+			}
+		})
+	}
 }
 
 func TestConfig_Struct(t *testing.T) {
