@@ -19,33 +19,6 @@ import (
 	"go.k6.io/k6/v2/output"
 )
 
-// Memory pools for reducing allocations during high-throughput operations
-var (
-	// tagMapPool reuses map[string]string for tag storage
-	// Maps are cleared before returning to pool to prevent memory leaks
-	tagMapPool = sync.Pool{
-		New: func() any {
-			return make(map[string]string)
-		},
-	}
-
-	// compatibleRowPool reuses []any slices for compatible schema rows (21 fields)
-	// Pre-sized to avoid slice growth during append operations
-	compatibleRowPool = sync.Pool{
-		New: func() any {
-			return make([]any, 21)
-		},
-	}
-
-	// simpleRowPool reuses []any slices for simple schema rows (4 fields)
-	// Pre-sized to match simple schema field count
-	simpleRowPool = sync.Pool{
-		New: func() any {
-			return make([]any, 4)
-		},
-	}
-)
-
 // commitError wraps errors that occur during batch.Commit().
 // Commit errors are ambiguous: the server may have persisted the data before the
 // response was lost. To avoid duplication, these errors are NOT retried.
@@ -628,16 +601,6 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 		totalSamples += len(container.GetSamples())
 	}
 
-	// Accumulate rows that were successfully passed to ExecContext.
-	// These must NOT be released back to sync.Pool until after batch.Commit(),
-	// because the ClickHouse driver holds references to row data internally.
-	pendingRows := make([][]any, 0, totalSamples)
-	defer func() {
-		for _, row := range pendingRows {
-			converter.Release(row)
-		}
-	}()
-
 	for _, container := range samples {
 		for _, sample := range container.GetSamples() {
 			// Check for context cancellation every 1000 samples
@@ -661,11 +624,9 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 			// The deferred batch.Rollback() handles cleanup.
 			_, execErr := stmt.ExecContext(ctx, row...)
 			if execErr != nil {
-				converter.Release(row) // Driver discards failed rows, safe to release
 				o.insertErrors.Add(1)
 				return fmt.Errorf("failed to insert sample: %w", execErr)
 			}
-			pendingRows = append(pendingRows, row)
 			count++
 		}
 	}

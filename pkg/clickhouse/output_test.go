@@ -1,7 +1,6 @@
 package clickhouse
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.k6.io/k6/v2/metrics"
 	"go.k6.io/k6/v2/output"
 )
 
@@ -433,41 +431,6 @@ func BenchmarkOutput_New(b *testing.B) {
 		}
 		_ = out
 	}
-}
-
-// Test for Issue #1: Verify Release is deferred until after Commit (not called before)
-// This tests the doFlush method indirectly by verifying the pendingRows pattern.
-func TestDoFlush_ReleaseAfterCommit(t *testing.T) {
-	t.Parallel()
-
-	t.Run("release is deferred on context cancellation", func(t *testing.T) {
-		t.Parallel()
-
-		// Create an Output with no database — doFlush should fail at BeginTx
-		// but this validates the pendingRows accumulator doesn't leak on error paths
-		params := output.Params{Logger: newTestLogger(t)}
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
-		clickhouseOut.db = nil
-
-		registry := metrics.NewRegistry()
-		metric := registry.MustNewMetric("test", metrics.Counter)
-		sample := metrics.Sample{
-			TimeSeries: metrics.TimeSeries{
-				Metric: metric,
-			},
-			Time:  time.Now(),
-			Value: 1.0,
-		}
-		containers := []metrics.SampleContainer{metrics.Samples{sample}}
-
-		ctx := context.Background()
-		err = clickhouseOut.doFlush(ctx, containers)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "database connection not initialized")
-	})
 }
 
 // Test for Issue #2: Verify Stop allows final flush to execute

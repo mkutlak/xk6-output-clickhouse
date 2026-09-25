@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"maps"
 	"strconv"
 	"time"
 
@@ -157,25 +156,21 @@ type compatibleSample struct {
 
 // convertToCompatible converts a k6 sample to the compatible schema format.
 func convertToCompatible(sample metrics.Sample, defaultBuildID uint32) (compatibleSample, error) {
-	// Get a reusable map from the pool to reduce allocations
-	extraTags := tagMapPool.Get().(map[string]string)
-	clear(extraTags)
-
 	cs := compatibleSample{
 		Timestamp:        sample.Time,
 		Metric:           sample.Metric.Name,
 		Value:            sample.Value,
 		MetricType:       mapMetricType(sample.Metric.Type),
 		ExpectedResponse: true, // default
-		ExtraTags:        extraTags,
+		ExtraTags:        map[string]string{},
 	}
 
 	// Extract and map tags to columns
 	if sample.Tags != nil {
-		// Copy source tags once into the pooled map; extraction deletes known keys,
-		// leaving only the leftovers as extra_tags — no scratch map, no second copy.
-		// We delete from the pooled copy, so k6's source tag map is never mutated.
-		maps.Copy(cs.ExtraTags, sample.Tags.Map())
+		// sample.Tags.Map() returns a fresh map on every call, so extraction can
+		// delete known keys in place — the leftovers become extra_tags with no
+		// extra copy, and k6's internal tag state is never touched.
+		cs.ExtraTags = sample.Tags.Map()
 		tagMap := cs.ExtraTags
 
 		// TestID (with aliases)
@@ -269,48 +264,15 @@ type CompatibleConverter struct {
 func (c CompatibleConverter) Convert(ctx context.Context, sample metrics.Sample) ([]any, error) {
 	cs, err := convertToCompatible(sample, c.defaultBuildID)
 	if err != nil {
-		// Return tag map to pool even on error
-		tagMapPool.Put(cs.ExtraTags)
 		return nil, err
 	}
 
-	// Get row buffer from pool
-	row := compatibleRowPool.Get().([]any)
-
-	// Populate row buffer with sample data (order matches INSERT query)
-	row[0] = cs.Timestamp
-	row[1] = cs.Metric
-	row[2] = cs.MetricType
-	row[3] = cs.Value
-	row[4] = cs.TestID
-	row[5] = cs.Release
-	row[6] = cs.Scenario
-	row[7] = cs.BuildID
-	row[8] = cs.Version
-	row[9] = cs.Branch
-	row[10] = cs.Name
-	row[11] = cs.Method
-	row[12] = cs.Status
-	row[13] = cs.ExpectedResponse
-	row[14] = cs.ErrorCode
-	row[15] = cs.Rating
-	row[16] = cs.ResourceType
-	row[17] = cs.UIFeature
-	row[18] = cs.CheckName
-	row[19] = cs.GroupName
-	row[20] = cs.ExtraTags
-
-	return row, nil
-}
-
-// Release returns pooled resources after insertion.
-func (c CompatibleConverter) Release(row []any) {
-	// Return tag map to pool
-	if len(row) > 20 {
-		if tags, ok := row[20].(map[string]string); ok {
-			tagMapPool.Put(tags)
-		}
-	}
-	// Return row buffer to pool
-	compatibleRowPool.Put(row) //nolint:staticcheck // SA6002: pooling a []any boxes the slice header into 'any' (one alloc per Put); accepted to keep the SampleConverter interface stable
+	// Row order matches the INSERT query column order.
+	return []any{
+		cs.Timestamp, cs.Metric, cs.MetricType, cs.Value,
+		cs.TestID, cs.Release, cs.Scenario, cs.BuildID, cs.Version, cs.Branch,
+		cs.Name, cs.Method, cs.Status, cs.ExpectedResponse, cs.ErrorCode,
+		cs.Rating, cs.ResourceType, cs.UIFeature, cs.CheckName, cs.GroupName,
+		cs.ExtraTags,
+	}, nil
 }

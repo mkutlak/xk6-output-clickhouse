@@ -26,10 +26,6 @@ type SampleConverter interface {
 	// The returned slice must match the column order from InsertQuery.
 	// Returns an error if conversion fails (e.g., type parsing errors).
 	Convert(ctx context.Context, sample metrics.Sample) ([]any, error)
-
-	// Release returns pooled resources (e.g., maps, slices) after insertion.
-	// Called after batch Commit completes to enable memory reuse.
-	Release(row []any)
 }
 
 // SchemaImplementation bundles a schema creator with its corresponding converter.
