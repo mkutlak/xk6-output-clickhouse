@@ -347,37 +347,47 @@ func parseConfig(params output.Params) (config, error) {
 	return cfg, nil
 }
 
-// applyJSON applies the collectors.xk6-clickhouse object. TLS options may be
-// nested in a "tls" object.
+// applyJSON applies the collectors.xk6-clickhouse object. Keys match
+// case-insensitively, as encoding/json matches struct fields. TLS options may
+// be nested in a "tls" object.
 func (c *config) applyJSON(data []byte) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	if raw, ok := fields["tls"]; ok {
+	names := make([]string, 0, len(options)+1)
+	for _, o := range options {
+		names = append(names, o.key)
+	}
+	fields, err := foldKeys(raw, append(names, "tls"), "", unknownOptionError)
+	if err != nil {
+		return err
+	}
+
+	if tlsValue, ok := fields["tls"]; ok {
 		delete(fields, "tls")
-		var tlsFields map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &tlsFields); err != nil {
+		var tlsRaw map[string]json.RawMessage
+		if err := json.Unmarshal(tlsValue, &tlsRaw); err != nil {
 			return fmt.Errorf("invalid tls value: %w", err)
 		}
-		for name, v := range tlsFields {
-			key, ok := jsonTLSKeys[name]
-			if !ok {
-				return fmt.Errorf("unknown tls option %q (valid tls options: %s)",
-					name, strings.Join(slices.Sorted(maps.Keys(jsonTLSKeys)), ", "))
-			}
+		tlsNames := slices.Sorted(maps.Keys(jsonTLSKeys))
+		tlsFields, tlsErr := foldKeys(tlsRaw, tlsNames, "tls.", func(name string) error {
+			return fmt.Errorf("unknown tls option %q (valid tls options: %s)", name, strings.Join(tlsNames, ", "))
+		})
+		if tlsErr != nil {
+			return tlsErr
+		}
+		for _, name := range slices.Sorted(maps.Keys(tlsFields)) {
+			key := jsonTLSKeys[name]
 			if _, dup := fields[key]; dup {
 				return fmt.Errorf("both tls.%s and %s are set", name, key)
 			}
-			fields[key] = v
+			fields[key] = tlsFields[name]
 		}
 	}
 
 	for _, key := range slices.Sorted(maps.Keys(fields)) {
-		if !isOption(key) {
-			return unknownOptionError(key)
-		}
 		value, err := jsonScalar(fields[key])
 		if err != nil {
 			return fmt.Errorf("invalid %s value: %w", key, err)
@@ -387,6 +397,26 @@ func (c *config) applyJSON(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// foldKeys re-keys fields by the name in names that each key matches
+// case-insensitively. It rejects a key matching no name, and two keys matching
+// the same name; prefix qualifies the name in that error.
+func foldKeys(fields map[string]json.RawMessage, names []string, prefix string,
+	unknown func(key string) error,
+) (map[string]json.RawMessage, error) {
+	folded := make(map[string]json.RawMessage, len(fields))
+	for _, key := range slices.Sorted(maps.Keys(fields)) {
+		i := slices.IndexFunc(names, func(name string) bool { return strings.EqualFold(name, key) })
+		if i < 0 {
+			return nil, unknown(key)
+		}
+		if _, dup := folded[names[i]]; dup {
+			return nil, fmt.Errorf("%s%s is set more than once", prefix, names[i])
+		}
+		folded[names[i]] = fields[key]
+	}
+	return folded, nil
 }
 
 // jsonScalar returns the option text of a JSON value: a string's contents, a
@@ -412,6 +442,13 @@ func jsonScalar(raw json.RawMessage) (string, error) {
 	}
 }
 
+// schemeRegex matches a URL scheme and "://" at the start of the --out argument.
+var schemeRegex = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+
+// errMalformedDSN reports an --out argument that cannot be parsed without
+// risking a password in the error, so it quotes none of the argument.
+var errMalformedDSN = errors.New("malformed DSN: percent-encode reserved characters (@ : / ? # %) in the user name and password")
+
 // parseArgumentURL parses the --out argument as a ClickHouse DSN, prefixing
 // a "clickhouse://" scheme when arg has none (a bare "host:port" is not a
 // URL — url.Parse would misread the host as a scheme). It rejects any other
@@ -419,18 +456,30 @@ func jsonScalar(raw json.RawMessage) (string, error) {
 // containing an unencoded '#').
 func parseArgumentURL(arg string) (*url.URL, error) {
 	withScheme := arg
-	if !strings.Contains(arg, "://") {
+	if !schemeRegex.MatchString(arg) {
 		withScheme = "clickhouse://" + arg
 	}
 
 	u, err := url.Parse(withScheme)
 	if err != nil {
-		// *url.Error embeds the whole input (including any password) in its
-		// message; unwrap to the inner error so a bad DSN never leaks it.
+		// The inner error may quote part of a password that an unencoded
+		// reserved character split off the userinfo.
+		if strings.Contains(arg, "@") {
+			return nil, errMalformedDSN
+		}
+		// *url.Error embeds the whole input in its message; unwrap to the
+		// inner error.
 		if ue, ok := errors.AsType[*url.Error](err); ok {
 			err = ue.Err
 		}
 		return nil, err
+	}
+
+	// An unencoded '/' or '?' in the userinfo ends it early, leaving the rest
+	// of the password and the '@' in the host, path or a query key, which
+	// later errors would echo. None of them can legitimately contain '@'.
+	if strings.Contains(u.Host, "@") || strings.Contains(u.Path, "@") || queryKeyContainsAt(u.RawQuery) {
+		return nil, errMalformedDSN
 	}
 
 	if u.Scheme != "clickhouse" {
@@ -441,6 +490,16 @@ func parseArgumentURL(arg string) (*url.URL, error) {
 	}
 
 	return u, nil
+}
+
+// queryKeyContainsAt reports whether a key of rawQuery contains '@'.
+func queryKeyContainsAt(rawQuery string) bool {
+	for pair := range strings.SplitSeq(rawQuery, "&") {
+		if key, _, _ := strings.Cut(pair, "="); strings.Contains(key, "@") {
+			return true
+		}
+	}
+	return false
 }
 
 // applyArgument applies the --out argument, a ClickHouse DSN of the form

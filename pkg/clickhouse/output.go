@@ -407,8 +407,17 @@ func (o *clickhouseOutput) write(ctx context.Context, samples []metrics.Sample) 
 	}
 
 	attempts := o.config.RetryAttempts + 1 // the initial attempt plus retries
+	first := true
 	err := retry.Do(
-		func() error { return o.insertRows(ctx, rows) },
+		func() error {
+			// Count retries as they run: OnRetry fires before the backoff
+			// wait, so it also sees a retry that ctx then cancels.
+			if !first {
+				o.stats.retries++
+			}
+			first = false
+			return o.insertRows(ctx, rows)
+		},
 		retry.Attempts(attempts),
 		retry.Delay(o.config.RetryDelay),
 		retry.MaxDelay(o.config.RetryMaxDelay),
@@ -421,7 +430,6 @@ func (o *clickhouseOutput) write(ctx context.Context, samples []metrics.Sample) 
 			if n+1 == attempts {
 				return
 			}
-			o.stats.retries++
 			o.logger.WithError(err).WithFields(logrus.Fields{
 				"attempt":     n + 1,
 				"maxAttempts": attempts,
@@ -483,6 +491,12 @@ func (o *clickhouseOutput) insertRows(ctx context.Context, rows [][]any) error {
 			o.stats.insertErrors++
 			return fmt.Errorf("failed to insert sample: %w", err)
 		}
+	}
+
+	// Once ctx is done, Commit returns its error without committing, so the
+	// rows are certainly lost rather than ambiguously persisted.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("batch not committed: %w", err)
 	}
 
 	o.stats.written += uint64(len(rows))
