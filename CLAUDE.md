@@ -1,4 +1,4 @@
-<!-- Last reviewed: 2026-05-17. Re-review quarterly or after major toolchain/dependency upgrades. -->
+<!-- Last reviewed: 2026-09-25. Re-review quarterly or after major toolchain/dependency upgrades. -->
 
 # xk6-output-clickhouse
 
@@ -20,26 +20,28 @@ Run `make help` for the full target list (Docker, release, modernize). Key comma
 
 ```bash
 # Quality gates
-make check          # fmt + vet + tidy + test — run before claiming work done
+make check          # fmt + vet + tidy + test + go-fix-diff check; fmt/tidy REWRITE files in place; test needs Docker
 make lint           # golangci-lint
+make check && make lint   # CI-equivalent local gate (mirrors validate.yaml's lint + test jobs)
 make modernize      # apply Go modernizers (go fix)
 
 # Build & test
 make build          # build ./bin/k6 with the extension (uses xk6)
-make test           # go test -v -race ./...
+make test           # go test -v -race ./... (needs Docker for integration_test.go)
 make test-unit      # go test -short -race ./... (no Docker required)
 make test-coverage  # coverage report -> tests/coverage.html
 
 # Local dev environment (ClickHouse + Grafana)
 make docker-compose-up   # ClickHouse on :9000/:8123, Grafana on :3000
 # docker-compose sets a password; pass it (the compose default is "password")
-./bin/k6 run --out "xk6-clickhouse=localhost:9000?password=password" examples/simple.js
+./bin/k6 run --out "xk6-clickhouse=clickhouse://default:password@localhost:9000" examples/simple.js
 ```
 
 Run a single test:
 
 ```bash
 go test -race -run TestName ./pkg/clickhouse/
+go test -short -race -run TestName ./pkg/clickhouse/   # skip Docker-backed integration tests
 ```
 
 ## Agent Routing
@@ -62,7 +64,7 @@ go test -race -run TestName ./pkg/clickhouse/
 - Place markdown documents in `docs/`; build binaries to `bin/` (prefer `make build`).
 - Update `docs/` whenever you change how the extension is configured or used.
 - Only create post-task documentation when explicitly asked — ALWAYS confirm before creating it.
-- Ignore the `bin/` and `data/` directories when analyzing or searching code.
+- Ignore the `bin/`, `data/`, and `.omc/` directories when analyzing or searching code.
 
 ## Architecture
 
@@ -80,7 +82,7 @@ Public API surface: `New` (constructs the output), `Schema` (the pluggable-schem
 
 - **`schema_simple.go`** — Default schema: `timestamp`, `metric`, `value`, `tags` (Map column). Most flexible.
 
-- **`schema_compat.go`** — Legacy schema with 21 typed columns extracting known tags for better compression/query perf. Uses codecs (DoubleDelta, Gorilla, ZSTD) and 365-day TTL.
+- **`schema_compat.go`** — Legacy schema with 21 typed columns extracting known tags for better compression/query perf. Uses codecs (DoubleDelta, Gorilla, Delta, ZSTD) and 365-day TTL.
 
 ### Data Flow
 
@@ -88,7 +90,9 @@ Public API surface: `New` (constructs the output), `Schema` (the pluggable-schem
 k6 samples → AddMetricSamples (k6's output.SampleBuffer) → PeriodicFlusher calls flush every PushInterval
   → flush: pending samples (from a prior failed flush) + newly buffered samples
     → write: convert each sample to a row once via Schema.Row
-      → insertRows with retry.Do (exponential backoff): BEGIN tx → Prepare INSERT → Exec each row → Commit
+      → insertRows, retried with retry.Do: database/sql over clickhouse-go's std driver, where
+        BeginTx is a no-op, Prepare = PrepareBatch, Exec per row = client-side Append (buffers
+        locally), and Commit = Send — the only step that ships rows to ClickHouse
   → on failure: non-commit errors are kept in pending (trimmed to BufferMaxSamples via bound()) for the next flush;
     commit errors are ambiguous (data may already be persisted) and are neither retried nor re-buffered
   → on Stop: stop the flusher, drain pending once with a fresh bounded context, close the DB connection
@@ -98,17 +102,29 @@ k6 samples → AddMetricSamples (k6's output.SampleBuffer) → PeriodicFlusher c
 
 - **No internal locking around flush** — k6's `PeriodicFlusher` invokes `flush` on a single goroutine, one call at a time, so there is no flush mutex, WaitGroup, or RWMutex in this package
 - **No object pooling** — `TagSet.Map()` already returns a fresh map per sample; rows are plain slices allocated per flush
-- **Commit errors are ambiguous, not retried** — if `Commit()` fails, the server may have already persisted the data, so those samples are neither retried nor re-buffered (avoids duplicate inserts)
+- **Commit errors are ambiguous, not retried** — delivery is at-most-once: a batch is never re-sent, so it can never be duplicated, but an ambiguous `Commit()` failure can lose that whole batch rather than risk inserting it twice
+- **`isRetryableError` has a narrow scope** — only `io.EOF`/`io.ErrUnexpectedEOF`, `net.Error`, and a few message substrings (connection refused/reset, i/o timeout, no such host, network unreachable, broken pipe) are retried; any other pre-commit error (e.g. a bad query) skips retry immediately but is still buffered like any other flush failure
 - **Samples are converted once per flush** — only the database write (`insertRows`) is retried; a converted row is never re-converted
 - **`BufferMaxSamples` counts samples**, not bytes; `bound()` drops the oldest or newest samples per `BufferDropPolicy` once the pending buffer exceeds the limit
 
 ## Testing
 
-- Add tests for every new feature and bug fix — tests are ~50% of the codebase.
-- Integration tests (`integration_test.go`) use `testcontainers-go` with a real ClickHouse container and require Docker; run `make test-unit` to skip them.
-- Key test files, e.g.:
-  - `integration_test.go` — end-to-end against real ClickHouse
-  - `tls_test.go` — TLS/mTLS configuration scenarios
+- Add tests for every new feature and bug fix — test code is roughly 1.8x the production code.
+- Integration tests (`integration_test.go`) use `testcontainers-go` with a real ClickHouse container. Without Docker they FAIL, not skip, unless run with `-short`: `startClickHouseContainer` (`helpers_test.go`) only calls `t.Skip` when `testing.Short()`. Run `make test-unit` to skip them.
+- `pkg/clickhouse/main_test.go` holds `TestMain`: builds the TLS fixtures for `tls_test.go` and, in `-short` runs only, fails on goroutine leaks.
+- Key test files:
+  - `helpers_test.go` — shared fixtures: sample/logger/output builders, the ClickHouse testcontainer helper
+  - `integration_test.go` — end-to-end against real ClickHouse (simple, compatible, and custom schemas)
+  - `output_test.go` — output lifecycle, flush/retry/buffer behavior
   - `config_test.go` — config parsing and validation
   - `schema_test.go` — schema DDL/INSERT/Row conversion
-  - `output_test.go` — output lifecycle and flush behavior
+  - `tls_test.go` — TLS/mTLS configuration scenarios
+  - `register_test.go` (repo root) — verifies `init()` registers the output under `"xk6-clickhouse"`
+
+## Gotchas
+
+- Commits follow Conventional Commits; semantic-release (`.releaserc.json`) derives the version: `feat`→minor, `fix`/`perf`/`refactor`→patch, `docs(README)`→patch (other `docs` scopes release nothing), `chore`/`ci`/`test`/`style`→no release. Breaking changes bump **minor**, not major, while pre-1.0 — the v0.6.0 CHANGELOG entry documents exactly this for the k6 v2 migration.
+- Adding a config option means updating the `options` table in `config.go` *and* the Options table in `docs/configuration.md` by hand — nothing enforces they stay in sync.
+- `config.go` reads env vars from `params.Environment` (a map passed into `New`), not `os.Getenv` — config tests build that map directly, so they don't need `t.Setenv` and freely use `t.Parallel()`.
+- Bumping `.xk6-version` needs no other file changes: `Makefile` and `ci.yaml`'s build-check job both read the file directly. README's quickstart intentionally hardcodes `xk6@latest`, with its own note to pin a tag for reproducible builds.
+- `golangci-lint`'s version is pinned in two places that must be bumped together: `Makefile`'s `GOLANGCI_LINT_VERSION` and `validate.yaml`'s `golangci-lint-action` `version:` (both currently `v2.14.0`).
