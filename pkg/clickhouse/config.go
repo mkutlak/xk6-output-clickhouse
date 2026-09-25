@@ -118,34 +118,6 @@ type Config struct {
 	BufferDropPolicy string
 }
 
-// validateFileReadable checks if a file exists and is readable
-func validateFileReadable(path string) error {
-	if path == "" {
-		return fmt.Errorf("file path is empty")
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("file does not exist: %s", path)
-		}
-		return fmt.Errorf("cannot access file %s: %w", path, err)
-	}
-
-	if info.IsDir() {
-		return fmt.Errorf("path is a directory, not a file: %s", path)
-	}
-
-	// Try to open the file to verify readability
-	file, err := os.Open(path) // #nosec G304 - path is validated by caller
-	if err != nil {
-		return fmt.Errorf("file is not readable: %s: %w", path, err)
-	}
-	defer func() { _ = file.Close() }()
-
-	return nil
-}
-
 // Validate checks the configuration for validity
 //
 //nolint:gocyclo // complexity is acceptable for validation with many fields
@@ -181,37 +153,6 @@ func (c Config) Validate() error {
 	// Validate schema mode against registered implementations
 	if _, err := getSchema(c.SchemaMode); err != nil {
 		return fmt.Errorf("invalid schemaMode: %s (available: %v)", c.SchemaMode, availableSchemas())
-	}
-
-	// Validate TLS configuration
-	if c.TLS.Enabled {
-		// Validate CA certificate file if specified
-		if c.TLS.CAFile != "" {
-			if err := validateFileReadable(c.TLS.CAFile); err != nil {
-				return fmt.Errorf("TLS CA file validation failed: %w", err)
-			}
-		}
-
-		// Validate client certificate and key files
-		// Both must be specified together, or neither
-		hasCert := c.TLS.CertFile != ""
-		hasKey := c.TLS.KeyFile != ""
-
-		if hasCert != hasKey {
-			return fmt.Errorf("TLS client certificate and key must be specified together")
-		}
-
-		if hasCert {
-			if err := validateFileReadable(c.TLS.CertFile); err != nil {
-				return fmt.Errorf("TLS client certificate file validation failed: %w", err)
-			}
-		}
-
-		if hasKey {
-			if err := validateFileReadable(c.TLS.KeyFile); err != nil {
-				return fmt.Errorf("TLS client key file validation failed: %w", err)
-			}
-		}
 	}
 
 	// Validate retry configuration
@@ -570,6 +511,11 @@ func unknownEnvVars(env map[string]string) []string {
 func (tc TLSConfig) BuildTLSConfig() (*tls.Config, error) {
 	if !tc.Enabled {
 		return nil, nil //nolint:nilnil // nil TLS config is valid when TLS is disabled
+	}
+
+	// Client certificate and key must be specified together, or neither.
+	if (tc.CertFile != "") != (tc.KeyFile != "") {
+		return nil, fmt.Errorf("TLS client certificate and key must be specified together")
 	}
 
 	tlsConfig := &tls.Config{
