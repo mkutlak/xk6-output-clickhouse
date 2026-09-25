@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io"
@@ -297,8 +298,10 @@ func isRetryableError(err error) bool {
 		return false
 	}
 
-	// Check for EOF errors using typed checks (avoids matching "thereof", "whereof", etc.)
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	// Typed checks avoid matching words like "thereof". driver.ErrBadConn comes
+	// from a pooled connection the server closed (e.g. after a restart); a retry
+	// gets a fresh one.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, driver.ErrBadConn) {
 		return true
 	}
 

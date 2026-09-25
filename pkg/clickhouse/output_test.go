@@ -238,6 +238,8 @@ func TestIsRetryableError(t *testing.T) {
 		{"io.ErrUnexpectedEOF", io.ErrUnexpectedEOF, true},
 		{"wrapped io.EOF", fmt.Errorf("read failed: %w", io.EOF), true},
 		{"wrapped io.ErrUnexpectedEOF", fmt.Errorf("read failed: %w", io.ErrUnexpectedEOF), true},
+		{"wrapped driver.ErrBadConn", fmt.Errorf("failed to prepare statement: %w", driver.ErrBadConn), true},
+		{"commitError wrapping driver.ErrBadConn", &commitError{err: driver.ErrBadConn}, false},
 		{"thereof should not match the EOF pattern", errors.New("the value thereof is invalid"), false},
 		{"whereof should not match the EOF pattern", errors.New("the source whereof is unknown"), false},
 		{"connection refused", errors.New("dial tcp 127.0.0.1:9000: connection refused"), true},
