@@ -6,7 +6,7 @@ REPO_NAME ?= xk6-output-clickhouse
 EXTENSION_MODULE ?= github.com/$(REPO_OWNER)/$(REPO_NAME)
 XK6_VERSION ?= $(shell cat .xk6-version 2>/dev/null || echo latest)
 export XK6_VERSION
-GOLANGCI_LINT_VERSION ?= v2.11.4
+GOLANGCI_LINT_VERSION ?= v2.14.0
 
 # CI/CD variables
 IMAGE_NAME ?= ghcr.io/$(REPO_OWNER)/$(REPO_NAME)
