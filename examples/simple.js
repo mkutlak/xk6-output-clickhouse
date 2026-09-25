@@ -12,6 +12,6 @@ export const options = {
 };
 
 export default function () {
-    http.get('https://test.k6.io');
+    http.get('https://quickpizza.grafana.com/');
     sleep(1);
 }
