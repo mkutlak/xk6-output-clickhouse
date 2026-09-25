@@ -13,31 +13,29 @@ formatters:
 
 linters:
   enable:
-    # Performance
+    # Bugs
     - bodyclose
-    - errcheck
-    - errorlint
-    - gocritic
-    - gocyclo
-    - ineffassign
-    - misspell
-    - prealloc
-    - unused
-
-    # Style
-    - govet
-
-    # Code quality
     - copyloopvar
     - durationcheck
-    - forbidigo
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
     - musttag
     - nilerr
     - nilnil
     - noctx
-    - nolintlint
     - staticcheck
+
+    # Maintainability and style
+    - forbidigo
+    - gocritic
+    - gocyclo
+    - misspell
+    - nolintlint
+    - prealloc
     - unparam
+    - unused
     - usestdlibvars
 
     # Security
@@ -84,7 +82,7 @@ linters:
     gosec:
       excludes:
         - G101
-        - G115 # integer overflow conversion: safe when guarded by non-negative check
+        - G115 # integer overflow conversion: parsed values are bounded by strconv bit sizes
         - G117 # exported struct field matches secret pattern: false positive for config fields
 
     staticcheck:
@@ -106,13 +104,6 @@ linters:
       - path: _test\.go
         linters:
           - bodyclose
-          - dupl
-          - funlen
           - gocyclo
           - gosec
-          - lll
           - unparam
-
-      - linters:
-          - lll
-        source: "^//|^\\s*//|test|Test"
