@@ -15,6 +15,6 @@ datasources:
       defaultDatabase: k6
       username: default
     secureJsonData:
-      password: password
+      password: ${CLICKHOUSE_PASSWORD}
     isDefault: true
     editable: true
