@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"net/url"
 	"testing"
 	"time"
 
@@ -81,7 +82,7 @@ func TestParseConfig(t *testing.T) {
 				JSONConfig: []byte(`{invalid json`),
 			},
 			expectError:   true,
-			errorContains: "failed to parse json config",
+			errorContains: "json config: invalid character",
 		},
 		{
 			name: "invalid pushInterval format",
@@ -162,6 +163,18 @@ func TestParseConfig(t *testing.T) {
 				Addr:         "db-host:9000",
 				Database:     "mydb",
 				Table:        "mytable",
+				PushInterval: 1 * time.Second,
+			},
+		},
+		{
+			name: "addr as query parameter",
+			params: output.Params{
+				ConfigArgument: "?addr=query-host:9000&database=prod",
+			},
+			expectedConfig: Config{
+				Addr:         "query-host:9000",
+				Database:     "prod",
+				Table:        "samples",
 				PushInterval: 1 * time.Second,
 			},
 		},
@@ -260,7 +273,7 @@ func TestParseConfig_EdgeCases(t *testing.T) {
 
 		_, err := ParseConfig(params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid clickhouse config argument")
+		assert.Contains(t, err.Error(), "invalid --out argument")
 	})
 }
 
@@ -364,72 +377,37 @@ func TestParseConfig_ZeroValueOverrides(t *testing.T) {
 	})
 }
 
-// Test for Issue #5: Env var parse errors return errors instead of being silently swallowed
+// TestParseConfig_InvalidEnvVars verifies env parse errors name the variable.
 func TestParseConfig_InvalidEnvVars(t *testing.T) {
-	// NOT parallel: t.Setenv modifies process environment
+	t.Parallel()
 
-	tests := []struct {
-		name          string
-		envVar        string
-		envValue      string
-		errorContains string
-	}{
-		{
-			name:          "invalid K6_CLICKHOUSE_TLS_ENABLED",
-			envVar:        "K6_CLICKHOUSE_TLS_ENABLED",
-			envValue:      "yes",
-			errorContains: "invalid K6_CLICKHOUSE_TLS_ENABLED",
-		},
-		{
-			name:          "invalid K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY",
-			envVar:        "K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY",
-			envValue:      "nope",
-			errorContains: "invalid K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY",
-		},
-		{
-			name:          "invalid K6_CLICKHOUSE_RETRY_ATTEMPTS",
-			envVar:        "K6_CLICKHOUSE_RETRY_ATTEMPTS",
-			envValue:      "abc",
-			errorContains: "invalid K6_CLICKHOUSE_RETRY_ATTEMPTS",
-		},
-		{
-			name:          "invalid K6_CLICKHOUSE_RETRY_DELAY",
-			envVar:        "K6_CLICKHOUSE_RETRY_DELAY",
-			envValue:      "not-a-duration",
-			errorContains: "invalid K6_CLICKHOUSE_RETRY_DELAY",
-		},
-		{
-			name:          "invalid K6_CLICKHOUSE_RETRY_MAX_DELAY",
-			envVar:        "K6_CLICKHOUSE_RETRY_MAX_DELAY",
-			envValue:      "xyz",
-			errorContains: "invalid K6_CLICKHOUSE_RETRY_MAX_DELAY",
-		},
-		{
-			name:          "invalid K6_CLICKHOUSE_BUFFER_ENABLED",
-			envVar:        "K6_CLICKHOUSE_BUFFER_ENABLED",
-			envValue:      "maybe",
-			errorContains: "invalid K6_CLICKHOUSE_BUFFER_ENABLED",
-		},
-		{
-			name:          "invalid K6_CLICKHOUSE_BUFFER_MAX_SAMPLES",
-			envVar:        "K6_CLICKHOUSE_BUFFER_MAX_SAMPLES",
-			envValue:      "lots",
-			errorContains: "invalid K6_CLICKHOUSE_BUFFER_MAX_SAMPLES",
-		},
+	tests := []struct{ envVar, envValue string }{
+		{"K6_CLICKHOUSE_PUSH_INTERVAL", "not-a-duration"},
+		{"K6_CLICKHOUSE_SKIP_SCHEMA_CREATION", "maybe"},
+		{"K6_CLICKHOUSE_TLS_ENABLED", "yes"},
+		{"K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY", "nope"},
+		{"K6_CLICKHOUSE_RETRY_ATTEMPTS", "abc"},
+		{"K6_CLICKHOUSE_RETRY_DELAY", "not-a-duration"},
+		{"K6_CLICKHOUSE_RETRY_MAX_DELAY", "xyz"},
+		{"K6_CLICKHOUSE_BUFFER_ENABLED", "maybe"},
+		{"K6_CLICKHOUSE_BUFFER_MAX_SAMPLES", "lots"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(tt.envVar, tt.envValue)
+		t.Run(tt.envVar, func(t *testing.T) {
+			t.Parallel()
 
-			_, err := ParseConfig(output.Params{})
+			_, err := ParseConfig(output.Params{
+				Environment: map[string]string{tt.envVar: tt.envValue},
+			})
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.errorContains)
+			assert.Contains(t, err.Error(), tt.envVar+": invalid ")
+			assert.Contains(t, err.Error(), `"`+tt.envValue+`"`)
 		})
 	}
 }
 
-// Test for Issue #5: URL param parse errors return errors
+// TestParseConfig_InvalidURLParams verifies URL param errors name the option.
 func TestParseConfig_InvalidURLParams(t *testing.T) {
 	t.Parallel()
 
@@ -441,42 +419,52 @@ func TestParseConfig_InvalidURLParams(t *testing.T) {
 		{
 			name:          "invalid tlsEnabled URL param",
 			urlParam:      "localhost:9000?tlsEnabled=yes",
-			errorContains: "invalid tlsEnabled URL parameter",
+			errorContains: `invalid --out argument: invalid tlsEnabled value "yes"`,
 		},
 		{
 			name:          "invalid tlsInsecureSkipVerify URL param",
 			urlParam:      "localhost:9000?tlsInsecureSkipVerify=nah",
-			errorContains: "invalid tlsInsecureSkipVerify URL parameter",
+			errorContains: "invalid --out argument: invalid tlsInsecureSkipVerify value",
 		},
 		{
 			name:          "invalid pushInterval URL param",
 			urlParam:      "localhost:9000?pushInterval=not-a-duration",
-			errorContains: "invalid pushInterval URL parameter value",
+			errorContains: "invalid --out argument: invalid pushInterval value",
 		},
 		{
 			name:          "invalid retryAttempts URL param",
 			urlParam:      "localhost:9000?retryAttempts=abc",
-			errorContains: "invalid retryAttempts URL parameter value",
+			errorContains: "invalid --out argument: invalid retryAttempts value",
 		},
 		{
 			name:          "invalid retryDelay URL param",
 			urlParam:      "localhost:9000?retryDelay=not-a-duration",
-			errorContains: "invalid retryDelay URL parameter value",
+			errorContains: "invalid --out argument: invalid retryDelay value",
 		},
 		{
 			name:          "invalid retryMaxDelay URL param",
 			urlParam:      "localhost:9000?retryMaxDelay=xyz",
-			errorContains: "invalid retryMaxDelay URL parameter value",
+			errorContains: "invalid --out argument: invalid retryMaxDelay value",
 		},
 		{
 			name:          "invalid bufferEnabled URL param",
 			urlParam:      "localhost:9000?bufferEnabled=maybe",
-			errorContains: "invalid bufferEnabled URL parameter value",
+			errorContains: "invalid --out argument: invalid bufferEnabled value",
 		},
 		{
 			name:          "invalid bufferMaxSamples URL param",
 			urlParam:      "localhost:9000?bufferMaxSamples=lots",
-			errorContains: "invalid bufferMaxSamples URL parameter value",
+			errorContains: "invalid --out argument: invalid bufferMaxSamples value",
+		},
+		{
+			name:          "unknown URL param",
+			urlParam:      "localhost:9000?databse=prod",
+			errorContains: `invalid --out argument: unknown option "databse" (valid options: addr, user, password, database, table,`,
+		},
+		{
+			name:          "unknown URL param with empty value",
+			urlParam:      "localhost:9000?tls=",
+			errorContains: `invalid --out argument: unknown option "tls"`,
 		},
 	}
 
@@ -493,74 +481,239 @@ func TestParseConfig_InvalidURLParams(t *testing.T) {
 	}
 }
 
-// TestParseConfig_PushIntervalEnvVar verifies K6_CLICKHOUSE_PUSH_INTERVAL is parsed from env.
-func TestParseConfig_PushIntervalEnvVar(t *testing.T) {
-	// NOT parallel: t.Setenv modifies process environment
+func TestConfig_Set(t *testing.T) {
+	t.Parallel()
 
-	t.Run("valid push interval env var", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_PUSH_INTERVAL", "5s")
+	t.Run("every option has a setter", func(t *testing.T) {
+		t.Parallel()
 
-		cfg, err := ParseConfig(output.Params{})
-		require.NoError(t, err)
-		assert.Equal(t, 5*time.Second, cfg.PushInterval)
+		for _, o := range options {
+			cfg := NewConfig()
+			// "0" is a valid string, bool, integer and duration.
+			assert.NoError(t, cfg.set(o.key, "0"), o.key)
+		}
 	})
 
-	t.Run("invalid push interval env var returns error", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_PUSH_INTERVAL", "not-a-duration")
+	t.Run("empty value leaves the option unset", func(t *testing.T) {
+		t.Parallel()
 
-		_, err := ParseConfig(output.Params{})
+		cfg := NewConfig()
+		for _, o := range options {
+			require.NoError(t, cfg.set(o.key, ""), o.key)
+		}
+		assert.Equal(t, NewConfig(), cfg)
+	})
+
+	t.Run("unknown key lists valid options", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := NewConfig()
+		err := cfg.set("databse", "k6")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid K6_CLICKHOUSE_PUSH_INTERVAL")
+		assert.Contains(t, err.Error(), `unknown option "databse" (valid options: addr, user, password, database, table, pushInterval,`)
+		assert.Contains(t, err.Error(), ", bufferDropPolicy)")
 	})
 }
 
-// TestParseConfig_PushIntervalURLParam verifies pushInterval is parsed from URL query params.
-func TestParseConfig_PushIntervalURLParam(t *testing.T) {
+// TestParseConfig_EverySource sets every option from each source, including
+// zero values that override non-zero defaults (retryAttempts, bufferEnabled).
+func TestParseConfig_EverySource(t *testing.T) {
+	t.Parallel()
+
+	want := Config{
+		Addr:               "ch.example.com:9440",
+		User:               "k6user",
+		Password:           "secret",
+		Database:           "metrics_db",
+		Table:              "metrics_tbl",
+		PushInterval:       5 * time.Second,
+		SchemaMode:         "compatible",
+		SkipSchemaCreation: true,
+		TLS: TLSConfig{
+			Enabled:            true,
+			InsecureSkipVerify: true,
+			CAFile:             testCACertFile,
+			CertFile:           testClientCert,
+			KeyFile:            testClientKey,
+			ServerName:         "ch.example.com",
+		},
+		RetryAttempts:    0,
+		RetryDelay:       200 * time.Millisecond,
+		RetryMaxDelay:    10 * time.Second,
+		BufferEnabled:    false,
+		BufferMaxSamples: 5000,
+		BufferDropPolicy: "newest",
+	}
+
+	query := url.Values{
+		"addr":                  {"ch.example.com:9440"},
+		"user":                  {"k6user"},
+		"password":              {"secret"},
+		"database":              {"metrics_db"},
+		"table":                 {"metrics_tbl"},
+		"pushInterval":          {"5s"},
+		"schemaMode":            {"compatible"},
+		"skipSchemaCreation":    {"true"},
+		"tlsEnabled":            {"true"},
+		"tlsInsecureSkipVerify": {"true"},
+		"tlsCAFile":             {testCACertFile},
+		"tlsCertFile":           {testClientCert},
+		"tlsKeyFile":            {testClientKey},
+		"tlsServerName":         {"ch.example.com"},
+		"retryAttempts":         {"0"},
+		"retryDelay":            {"200ms"},
+		"retryMaxDelay":         {"10s"},
+		"bufferEnabled":         {"false"},
+		"bufferMaxSamples":      {"5000"},
+		"bufferDropPolicy":      {"newest"},
+	}
+
+	sources := map[string]output.Params{
+		"environment": {Environment: map[string]string{
+			"K6_CLICKHOUSE_ADDR":                     "ch.example.com:9440",
+			"K6_CLICKHOUSE_USER":                     "k6user",
+			"K6_CLICKHOUSE_PASSWORD":                 "secret",
+			"K6_CLICKHOUSE_DB":                       "metrics_db",
+			"K6_CLICKHOUSE_TABLE":                    "metrics_tbl",
+			"K6_CLICKHOUSE_PUSH_INTERVAL":            "5s",
+			"K6_CLICKHOUSE_SCHEMA_MODE":              "compatible",
+			"K6_CLICKHOUSE_SKIP_SCHEMA_CREATION":     "true",
+			"K6_CLICKHOUSE_TLS_ENABLED":              "true",
+			"K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY": "true",
+			"K6_CLICKHOUSE_TLS_CA_FILE":              testCACertFile,
+			"K6_CLICKHOUSE_TLS_CERT_FILE":            testClientCert,
+			"K6_CLICKHOUSE_TLS_KEY_FILE":             testClientKey,
+			"K6_CLICKHOUSE_TLS_SERVER_NAME":          "ch.example.com",
+			"K6_CLICKHOUSE_RETRY_ATTEMPTS":           "0",
+			"K6_CLICKHOUSE_RETRY_DELAY":              "200ms",
+			"K6_CLICKHOUSE_RETRY_MAX_DELAY":          "10s",
+			"K6_CLICKHOUSE_BUFFER_ENABLED":           "false",
+			"K6_CLICKHOUSE_BUFFER_MAX_SAMPLES":       "5000",
+			"K6_CLICKHOUSE_BUFFER_DROP_POLICY":       "newest",
+		}},
+		"url parameters": {ConfigArgument: "?" + query.Encode()},
+		"json": {JSONConfig: mustMarshalJSON(map[string]any{
+			"addr":               "ch.example.com:9440",
+			"user":               "k6user",
+			"password":           "secret",
+			"database":           "metrics_db",
+			"table":              "metrics_tbl",
+			"pushInterval":       "5s",
+			"schemaMode":         "compatible",
+			"skipSchemaCreation": true,
+			"tls": map[string]any{
+				"enabled":            true,
+				"insecureSkipVerify": true,
+				"caFile":             testCACertFile,
+				"certFile":           testClientCert,
+				"keyFile":            testClientKey,
+				"serverName":         "ch.example.com",
+			},
+			"retryAttempts":    0,
+			"retryDelay":       "200ms",
+			"retryMaxDelay":    "10s",
+			"bufferEnabled":    false,
+			"bufferMaxSamples": 5000,
+			"bufferDropPolicy": "newest",
+		})},
+	}
+
+	for name, params := range sources {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := ParseConfig(params)
+			require.NoError(t, err)
+			assert.Equal(t, want, cfg)
+		})
+	}
+}
+
+// TestParseConfig_Precedence verifies env > URL > JSON, and that an empty env
+// value does not override.
+func TestParseConfig_Precedence(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := ParseConfig(output.Params{
-		ConfigArgument: "localhost:9000?pushInterval=2s",
+		JSONConfig: mustMarshalJSON(map[string]any{
+			"user":     "json_user",
+			"database": "json_db",
+			"table":    "json_table",
+		}),
+		ConfigArgument: "?user=url_user&table=url_table",
+		Environment: map[string]string{
+			"K6_CLICKHOUSE_USER":  "env_user",
+			"K6_CLICKHOUSE_TABLE": "",
+		},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 2*time.Second, cfg.PushInterval)
+	assert.Equal(t, "env_user", cfg.User)
+	assert.Equal(t, "url_table", cfg.Table)
+	assert.Equal(t, "json_db", cfg.Database)
 }
 
-// TestParseConfig_RetryURLParams verifies retryAttempts/retryDelay/retryMaxDelay URL params.
-func TestParseConfig_RetryURLParams(t *testing.T) {
+func TestParseConfig_JSONValues(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := ParseConfig(output.Params{
-		ConfigArgument: "localhost:9000?retryAttempts=5&retryDelay=200ms&retryMaxDelay=10s",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, uint(5), cfg.RetryAttempts)
-	assert.Equal(t, 200*time.Millisecond, cfg.RetryDelay)
-	assert.Equal(t, 10*time.Second, cfg.RetryMaxDelay)
-}
-
-// TestParseConfig_BufferURLParams verifies bufferEnabled/bufferMaxSamples/bufferDropPolicy URL params.
-func TestParseConfig_BufferURLParams(t *testing.T) {
-	t.Parallel()
-
-	t.Run("buffer enabled with custom max samples and drop policy", func(t *testing.T) {
+	t.Run("null leaves the option unset", func(t *testing.T) {
 		t.Parallel()
 
 		cfg, err := ParseConfig(output.Params{
-			ConfigArgument: "localhost:9000?bufferEnabled=true&bufferMaxSamples=5000&bufferDropPolicy=newest",
+			JSONConfig: []byte(`{"database": null, "retryAttempts": null, "tls": null}`),
 		})
 		require.NoError(t, err)
-		assert.True(t, cfg.BufferEnabled)
-		assert.Equal(t, 5000, cfg.BufferMaxSamples)
-		assert.Equal(t, "newest", cfg.BufferDropPolicy)
+		assert.Equal(t, NewConfig(), cfg)
 	})
 
-	t.Run("buffer disabled via URL param", func(t *testing.T) {
+	t.Run("strings are accepted for typed options", func(t *testing.T) {
 		t.Parallel()
 
 		cfg, err := ParseConfig(output.Params{
-			ConfigArgument: "localhost:9000?bufferEnabled=false",
+			JSONConfig: []byte(`{"retryAttempts": "5", "bufferEnabled": "false", "tls": {"enabled": "true"}}`),
 		})
 		require.NoError(t, err)
+		assert.Equal(t, uint(5), cfg.RetryAttempts)
 		assert.False(t, cfg.BufferEnabled)
+		assert.True(t, cfg.TLS.Enabled)
 	})
+
+	errorCases := []struct{ name, json, errorContains string }{
+		{"unknown key", `{"databse": "k6"}`, `json config: unknown option "databse" (valid options: addr, user,`},
+		{"unknown tls key", `{"tls": {"ca": "ca.pem"}}`, `json config: unknown tls option "ca" (valid tls options: caFile, certFile, enabled, insecureSkipVerify, keyFile, serverName)`},
+		{"tls not an object", `{"tls": true}`, "json config: invalid tls value"},
+		{"tls key also set flat", `{"tlsEnabled": true, "tls": {"enabled": false}}`, "json config: both tls.enabled and tlsEnabled are set"},
+		{"object value", `{"database": {"name": "k6"}}`, "json config: invalid database value: must be a string, number, boolean or null"},
+		{"array value", `{"addr": ["a:9000", "b:9000"]}`, "json config: invalid addr value: must be a string, number, boolean or null"},
+		{"fractional number", `{"retryAttempts": 1.5}`, `json config: invalid retryAttempts value "1.5"`},
+		{"number for duration", `{"pushInterval": 5}`, `json config: invalid pushInterval value "5"`},
+		{"not an object", `[1]`, "json config: json: cannot unmarshal array"},
+	}
+	for _, tt := range errorCases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := ParseConfig(output.Params{JSONConfig: []byte(tt.json)})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errorContains)
+		})
+	}
+}
+
+func TestUnknownEnvVars(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"K6_CLICKHOUSE_DB":       "k6",
+		"K6_CLICKHOUSE_TLS":      "true",
+		"K6_CLICKHOUSE_DATABASE": "metrics",
+		"K6_OUT":                 "xk6-clickhouse",
+		"PATH":                   "/usr/bin",
+	}
+	assert.Equal(t, []string{"K6_CLICKHOUSE_DATABASE", "K6_CLICKHOUSE_TLS"}, unknownEnvVars(env))
+	assert.Empty(t, unknownEnvVars(nil))
+
+	// Unknown variables share the K6_ namespace, so parsing ignores them.
+	cfg, err := ParseConfig(output.Params{Environment: env})
+	require.NoError(t, err)
+	assert.Equal(t, "k6", cfg.Database)
 }

@@ -1,13 +1,17 @@
 package clickhouse
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,47 +43,26 @@ const (
 // TLSConfig holds TLS/SSL configuration options
 type TLSConfig struct {
 	// Enabled controls whether TLS is enabled
-	// Env: K6_CLICKHOUSE_TLS_ENABLED
 	Enabled bool
 
 	// InsecureSkipVerify disables certificate verification (INSECURE - use only for testing)
-	// Env: K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY
 	InsecureSkipVerify bool
 
 	// CAFile is the path to a CA certificate file to append to the system pool
-	// Env: K6_CLICKHOUSE_TLS_CA_FILE
 	CAFile string
 
 	// CertFile is the path to a client certificate file for mTLS
-	// Env: K6_CLICKHOUSE_TLS_CERT_FILE
 	CertFile string
 
 	// KeyFile is the path to a client private key file for mTLS
-	// Env: K6_CLICKHOUSE_TLS_KEY_FILE
 	KeyFile string
 
 	// ServerName is the server name for SNI (Server Name Indication)
-	// Env: K6_CLICKHOUSE_TLS_SERVER_NAME
 	ServerName string
 }
 
-// Config holds the ClickHouse output configuration
-//
-// Default values:
-//   - Addr: "localhost:9000"
-//   - User: "default"
-//   - Password: "" (empty)
-//   - Database: "k6"
-//   - Table: "samples"
-//   - PushInterval: 1s
-//   - SchemaMode: "simple"
-//   - SkipSchemaCreation: false
-//   - RetryAttempts: 3
-//   - RetryDelay: 100ms
-//   - RetryMaxDelay: 5s
-//   - BufferEnabled: true
-//   - BufferMaxSamples: 100000
-//   - BufferDropPolicy: "oldest"
+// Config holds the ClickHouse output configuration. NewConfig returns the
+// defaults; options lists every key and its environment variable.
 //
 // Configuration sources (in priority order):
 //  1. Environment variables (K6_CLICKHOUSE_*)
@@ -88,74 +71,50 @@ type TLSConfig struct {
 //  4. Default values
 type Config struct {
 	// Addr is the ClickHouse server address (host:port).
-	// Env: K6_CLICKHOUSE_ADDR
 	Addr string
 
 	// User is the ClickHouse username.
-	// Env: K6_CLICKHOUSE_USER
 	User string
 
 	// Password is the ClickHouse password.
-	// Env: K6_CLICKHOUSE_PASSWORD
 	Password string
 
 	// Database is the database name to store metrics.
-	// Env: K6_CLICKHOUSE_DB
 	Database string
 
 	// Table is the table name to store metrics.
-	// Env: K6_CLICKHOUSE_TABLE
 	Table string
 
 	// PushInterval is how often to flush metrics to ClickHouse.
-	// Env: K6_CLICKHOUSE_PUSH_INTERVAL (parsed as duration, e.g. "1s")
 	PushInterval time.Duration
 
 	// SchemaMode determines the table schema ("simple" or "compatible").
-	// Env: K6_CLICKHOUSE_SCHEMA_MODE
 	SchemaMode string
 
 	// SkipSchemaCreation disables automatic database and table creation.
-	// Env: K6_CLICKHOUSE_SKIP_SCHEMA_CREATION (parsed as bool, e.g. "true"/"1" to skip)
 	SkipSchemaCreation bool
 
 	// TLS holds TLS/SSL configuration
 	TLS TLSConfig
 
-	// Retry settings for handling transient connection failures
-
-	// RetryAttempts is the maximum number of retry attempts per flush operation.
-	// Set to 0 for no retries (fail immediately). Default: 3
-	// Env: K6_CLICKHOUSE_RETRY_ATTEMPTS
+	// RetryAttempts is the maximum number of retries per flush; 0 fails immediately.
 	RetryAttempts uint
 
-	// RetryDelay is the initial delay between retry attempts.
-	// Uses exponential backoff: delay * 2^attempt. Default: 100ms
-	// Env: K6_CLICKHOUSE_RETRY_DELAY
+	// RetryDelay is the initial delay between retries, doubled on each attempt.
 	RetryDelay time.Duration
 
-	// RetryMaxDelay is the maximum delay cap for exponential backoff. Default: 5s
-	// Env: K6_CLICKHOUSE_RETRY_MAX_DELAY
+	// RetryMaxDelay caps the exponential backoff delay.
 	RetryMaxDelay time.Duration
 
-	// Buffer settings for handling extended outages
-
-	// BufferEnabled enables in-memory buffering of samples during connection failures.
-	// When true, failed samples are queued and retried on next successful connection.
-	// Default: true
-	// Env: K6_CLICKHOUSE_BUFFER_ENABLED
+	// BufferEnabled keeps samples from failed flushes in memory and retries
+	// them on the next flush.
 	BufferEnabled bool
 
 	// BufferMaxSamples is the maximum number of samples to buffer.
-	// When exceeded, samples are dropped according to BufferDropPolicy.
-	// Default: 100000
-	// Env: K6_CLICKHOUSE_BUFFER_MAX_SAMPLES
 	BufferMaxSamples int
 
-	// BufferDropPolicy determines which samples to drop when buffer overflows.
-	// Valid values: "oldest" (drop oldest, preserve recent) or "newest" (drop incoming).
-	// Default: "oldest"
-	// Env: K6_CLICKHOUSE_BUFFER_DROP_POLICY
+	// BufferDropPolicy picks which samples to drop when the buffer is full:
+	// "oldest" (keep recent samples) or "newest" (drop incoming samples).
 	BufferDropPolicy string
 }
 
@@ -289,387 +248,277 @@ func (c Config) Validate() error {
 // NewConfig returns a Config with default values
 func NewConfig() Config {
 	return Config{
-		Addr:               "localhost:9000",
-		User:               "default",
-		Password:           "",
-		Database:           "k6",
-		Table:              "samples",
-		PushInterval:       1 * time.Second,
-		SchemaMode:         "simple",
-		SkipSchemaCreation: false,
-		TLS: TLSConfig{
-			Enabled:            false,
-			InsecureSkipVerify: false,
-			CAFile:             "",
-			CertFile:           "",
-			KeyFile:            "",
-			ServerName:         "",
-		},
-		// Retry defaults: 3 attempts with exponential backoff (100ms, 200ms, 400ms...)
-		RetryAttempts: 3,
-		RetryDelay:    100 * time.Millisecond,
-		RetryMaxDelay: 5 * time.Second,
-		// Buffer defaults: enabled with 100K sample capacity, drop oldest on overflow
+		Addr:             "localhost:9000",
+		User:             "default",
+		Database:         "k6",
+		Table:            "samples",
+		PushInterval:     1 * time.Second,
+		SchemaMode:       "simple",
+		RetryAttempts:    3,
+		RetryDelay:       100 * time.Millisecond,
+		RetryMaxDelay:    5 * time.Second,
 		BufferEnabled:    true,
 		BufferMaxSamples: 100000,
 		BufferDropPolicy: dropOldest,
 	}
 }
 
-// ParseConfig parses the configuration from output.Params
+// envPrefix is the prefix shared by every option's environment variable.
+const envPrefix = "K6_CLICKHOUSE_"
+
+// option is a config key and its environment variable.
+type option struct{ key, env string }
+
+// options lists every config key with its environment variable, in the
+// order shown in error messages.
+var options = []option{
+	{"addr", "K6_CLICKHOUSE_ADDR"},
+	{"user", "K6_CLICKHOUSE_USER"},
+	{"password", "K6_CLICKHOUSE_PASSWORD"},
+	{"database", "K6_CLICKHOUSE_DB"},
+	{"table", "K6_CLICKHOUSE_TABLE"},
+	{"pushInterval", "K6_CLICKHOUSE_PUSH_INTERVAL"},
+	{"schemaMode", "K6_CLICKHOUSE_SCHEMA_MODE"},
+	{"skipSchemaCreation", "K6_CLICKHOUSE_SKIP_SCHEMA_CREATION"},
+	{"tlsEnabled", "K6_CLICKHOUSE_TLS_ENABLED"},
+	{"tlsInsecureSkipVerify", "K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY"},
+	{"tlsCAFile", "K6_CLICKHOUSE_TLS_CA_FILE"},
+	{"tlsCertFile", "K6_CLICKHOUSE_TLS_CERT_FILE"},
+	{"tlsKeyFile", "K6_CLICKHOUSE_TLS_KEY_FILE"},
+	{"tlsServerName", "K6_CLICKHOUSE_TLS_SERVER_NAME"},
+	{"retryAttempts", "K6_CLICKHOUSE_RETRY_ATTEMPTS"},
+	{"retryDelay", "K6_CLICKHOUSE_RETRY_DELAY"},
+	{"retryMaxDelay", "K6_CLICKHOUSE_RETRY_MAX_DELAY"},
+	{"bufferEnabled", "K6_CLICKHOUSE_BUFFER_ENABLED"},
+	{"bufferMaxSamples", "K6_CLICKHOUSE_BUFFER_MAX_SAMPLES"},
+	{"bufferDropPolicy", "K6_CLICKHOUSE_BUFFER_DROP_POLICY"},
+}
+
+// jsonTLSKeys maps the keys of the JSON config's "tls" object to option keys.
+var jsonTLSKeys = map[string]string{
+	"enabled":            "tlsEnabled",
+	"insecureSkipVerify": "tlsInsecureSkipVerify",
+	"caFile":             "tlsCAFile",
+	"certFile":           "tlsCertFile",
+	"keyFile":            "tlsKeyFile",
+	"serverName":         "tlsServerName",
+}
+
+// isOption reports whether key is listed in options.
+func isOption(key string) bool {
+	return slices.ContainsFunc(options, func(o option) bool { return o.key == key })
+}
+
+// unknownOptionError reports a key that is not listed in options.
+func unknownOptionError(key string) error {
+	keys := make([]string, len(options))
+	for i, o := range options {
+		keys[i] = o.key
+	}
+	return fmt.Errorf("unknown option %q (valid options: %s)", key, strings.Join(keys, ", "))
+}
+
+// set parses value and assigns it to the option key. An empty value leaves
+// the option unchanged.
 //
-//nolint:gocyclo // complexity is acceptable for parsing multiple config sources
+//nolint:gocyclo // one case per option
+func (c *Config) set(key, value string) error {
+	if !isOption(key) {
+		return unknownOptionError(key)
+	}
+	if value == "" {
+		return nil
+	}
+
+	var err error
+	switch key {
+	case "addr":
+		c.Addr = value
+	case "user":
+		c.User = value
+	case "password":
+		c.Password = value
+	case "database":
+		c.Database = value
+	case "table":
+		c.Table = value
+	case "pushInterval":
+		c.PushInterval, err = time.ParseDuration(value)
+	case "schemaMode":
+		c.SchemaMode = value
+	case "skipSchemaCreation":
+		c.SkipSchemaCreation, err = strconv.ParseBool(value)
+	case "tlsEnabled":
+		c.TLS.Enabled, err = strconv.ParseBool(value)
+	case "tlsInsecureSkipVerify":
+		c.TLS.InsecureSkipVerify, err = strconv.ParseBool(value)
+	case "tlsCAFile":
+		c.TLS.CAFile = value
+	case "tlsCertFile":
+		c.TLS.CertFile = value
+	case "tlsKeyFile":
+		c.TLS.KeyFile = value
+	case "tlsServerName":
+		c.TLS.ServerName = value
+	case "retryAttempts":
+		var n uint64
+		n, err = strconv.ParseUint(value, 10, 32)
+		c.RetryAttempts = uint(n)
+	case "retryDelay":
+		c.RetryDelay, err = time.ParseDuration(value)
+	case "retryMaxDelay":
+		c.RetryMaxDelay, err = time.ParseDuration(value)
+	case "bufferEnabled":
+		c.BufferEnabled, err = strconv.ParseBool(value)
+	case "bufferMaxSamples":
+		c.BufferMaxSamples, err = strconv.Atoi(value)
+	case "bufferDropPolicy":
+		c.BufferDropPolicy = value
+	default:
+		return unknownOptionError(key)
+	}
+	if err != nil {
+		return fmt.Errorf("invalid %s value %q: %w", key, value, err)
+	}
+	return nil
+}
+
+// ParseConfig builds a Config from defaults, the JSON config, the config
+// argument and the environment, each overriding the previous, and validates it.
 func ParseConfig(params output.Params) (Config, error) {
 	cfg := NewConfig()
 
-	// Parse JSON config if provided
 	if params.JSONConfig != nil {
-		jsonConf := struct {
-			Addr               string `json:"addr"`
-			User               string `json:"user"`
-			Password           string `json:"password"`
-			Database           string `json:"database"`
-			Table              string `json:"table"`
-			PushInterval       string `json:"pushInterval"`
-			SchemaMode         string `json:"schemaMode"`
-			SkipSchemaCreation *bool  `json:"skipSchemaCreation"` // Pointer to distinguish unset from false
-			TLS                *struct {
-				Enabled            *bool  `json:"enabled"`            // Pointer to distinguish unset from false
-				InsecureSkipVerify *bool  `json:"insecureSkipVerify"` // Pointer to distinguish unset from false
-				CAFile             string `json:"caFile"`
-				CertFile           string `json:"certFile"`
-				KeyFile            string `json:"keyFile"`
-				ServerName         string `json:"serverName"`
-			} `json:"tls"`
-			// Retry configuration
-			RetryAttempts *uint  `json:"retryAttempts"` // Pointer to distinguish unset from 0
-			RetryDelay    string `json:"retryDelay"`
-			RetryMaxDelay string `json:"retryMaxDelay"`
-			// Buffer configuration
-			BufferEnabled    *bool  `json:"bufferEnabled"`    // Pointer to distinguish unset from false
-			BufferMaxSamples *int   `json:"bufferMaxSamples"` // Pointer to distinguish unset from 0
-			BufferDropPolicy string `json:"bufferDropPolicy"`
-		}{}
-
-		if err := json.Unmarshal(params.JSONConfig, &jsonConf); err != nil {
-			return cfg, fmt.Errorf("failed to parse json config: %w", err)
-		}
-
-		if jsonConf.Addr != "" {
-			cfg.Addr = jsonConf.Addr
-		}
-		if jsonConf.User != "" {
-			cfg.User = jsonConf.User
-		}
-		if jsonConf.Password != "" {
-			cfg.Password = jsonConf.Password
-		}
-		if jsonConf.Database != "" {
-			cfg.Database = jsonConf.Database
-		}
-		if jsonConf.Table != "" {
-			cfg.Table = jsonConf.Table
-		}
-		if jsonConf.PushInterval != "" {
-			d, err := time.ParseDuration(jsonConf.PushInterval)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid pushInterval: %w", err)
-			}
-			cfg.PushInterval = d
-		}
-		if jsonConf.SchemaMode != "" {
-			cfg.SchemaMode = jsonConf.SchemaMode
-		}
-		if jsonConf.SkipSchemaCreation != nil {
-			cfg.SkipSchemaCreation = *jsonConf.SkipSchemaCreation
-		}
-		// Parse TLS config
-		if jsonConf.TLS != nil {
-			// Enabled/InsecureSkipVerify are pointers so an omitted key leaves the
-			// existing value untouched (rather than silently forcing it to false).
-			if jsonConf.TLS.Enabled != nil {
-				cfg.TLS.Enabled = *jsonConf.TLS.Enabled
-			}
-			if jsonConf.TLS.InsecureSkipVerify != nil {
-				cfg.TLS.InsecureSkipVerify = *jsonConf.TLS.InsecureSkipVerify
-			}
-			if jsonConf.TLS.CAFile != "" {
-				cfg.TLS.CAFile = jsonConf.TLS.CAFile
-			}
-			if jsonConf.TLS.CertFile != "" {
-				cfg.TLS.CertFile = jsonConf.TLS.CertFile
-			}
-			if jsonConf.TLS.KeyFile != "" {
-				cfg.TLS.KeyFile = jsonConf.TLS.KeyFile
-			}
-			if jsonConf.TLS.ServerName != "" {
-				cfg.TLS.ServerName = jsonConf.TLS.ServerName
-			}
-		}
-		// Parse retry config
-		if jsonConf.RetryAttempts != nil {
-			cfg.RetryAttempts = *jsonConf.RetryAttempts
-		}
-		if jsonConf.RetryDelay != "" {
-			d, err := time.ParseDuration(jsonConf.RetryDelay)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid retryDelay: %w", err)
-			}
-			cfg.RetryDelay = d
-		}
-		if jsonConf.RetryMaxDelay != "" {
-			d, err := time.ParseDuration(jsonConf.RetryMaxDelay)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid retryMaxDelay: %w", err)
-			}
-			cfg.RetryMaxDelay = d
-		}
-		// Parse buffer config
-		if jsonConf.BufferEnabled != nil {
-			cfg.BufferEnabled = *jsonConf.BufferEnabled
-		}
-		if jsonConf.BufferMaxSamples != nil {
-			cfg.BufferMaxSamples = *jsonConf.BufferMaxSamples
-		}
-		if jsonConf.BufferDropPolicy != "" {
-			cfg.BufferDropPolicy = jsonConf.BufferDropPolicy
+		if err := cfg.applyJSON(params.JSONConfig); err != nil {
+			return cfg, fmt.Errorf("json config: %w", err)
 		}
 	}
 
-	// Parse the config argument (--out xk6-clickhouse=addr or addr?param=value).
-	if arg := params.ConfigArgument; arg != "" {
-		// A bare "host:port" is not a URL — url.Parse would misread the host as a
-		// scheme. Only parse as a URL when a scheme ("://") is present; otherwise
-		// treat the argument as a raw address with an optional "?query" suffix.
-		addr, rawQuery := arg, ""
-		if strings.Contains(arg, "://") {
-			u, err := url.Parse(arg)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid clickhouse config argument %q: %w", arg, err)
-			}
-			addr, rawQuery = u.Host, u.RawQuery
-		} else if before, after, found := strings.Cut(arg, "?"); found {
-			addr, rawQuery = before, after
-		}
-		if addr != "" {
-			cfg.Addr = addr
-		}
-
-		q, err := url.ParseQuery(rawQuery)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid clickhouse config argument query %q: %w", arg, err)
-		}
-		if user := q.Get("user"); user != "" {
-			cfg.User = user
-		}
-		if password := q.Get("password"); password != "" {
-			cfg.Password = password
-		}
-		if db := q.Get("database"); db != "" {
-			cfg.Database = db
-		}
-		if table := q.Get("table"); table != "" {
-			cfg.Table = table
-		}
-		if pushInterval := q.Get("pushInterval"); pushInterval != "" {
-			d, err := time.ParseDuration(pushInterval)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid pushInterval URL parameter value %q: %w", pushInterval, err)
-			}
-			cfg.PushInterval = d
-		}
-		if schemaMode := q.Get("schemaMode"); schemaMode != "" {
-			cfg.SchemaMode = schemaMode
-		}
-		if skipSchema := q.Get("skipSchemaCreation"); skipSchema != "" {
-			v, err := strconv.ParseBool(skipSchema)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid skipSchemaCreation URL parameter value %q: %w", skipSchema, err)
-			}
-			cfg.SkipSchemaCreation = v
-		}
-
-		// Parse TLS URL parameters
-		if tlsEnabled := q.Get("tlsEnabled"); tlsEnabled != "" {
-			enabled, err := strconv.ParseBool(tlsEnabled)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid tlsEnabled URL parameter value %q: %w", tlsEnabled, err)
-			}
-			cfg.TLS.Enabled = enabled
-		}
-		if tlsInsecure := q.Get("tlsInsecureSkipVerify"); tlsInsecure != "" {
-			insecure, err := strconv.ParseBool(tlsInsecure)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid tlsInsecureSkipVerify URL parameter value %q: %w", tlsInsecure, err)
-			}
-			cfg.TLS.InsecureSkipVerify = insecure
-		}
-		if tlsCAFile := q.Get("tlsCAFile"); tlsCAFile != "" {
-			cfg.TLS.CAFile = tlsCAFile
-		}
-		if tlsCertFile := q.Get("tlsCertFile"); tlsCertFile != "" {
-			cfg.TLS.CertFile = tlsCertFile
-		}
-		if tlsKeyFile := q.Get("tlsKeyFile"); tlsKeyFile != "" {
-			cfg.TLS.KeyFile = tlsKeyFile
-		}
-		if tlsServerName := q.Get("tlsServerName"); tlsServerName != "" {
-			cfg.TLS.ServerName = tlsServerName
-		}
-
-		// Parse retry URL parameters
-		if retryAttempts := q.Get("retryAttempts"); retryAttempts != "" {
-			v, err := strconv.ParseUint(retryAttempts, 10, 32)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid retryAttempts URL parameter value %q: %w", retryAttempts, err)
-			}
-			cfg.RetryAttempts = uint(v)
-		}
-		if retryDelay := q.Get("retryDelay"); retryDelay != "" {
-			d, err := time.ParseDuration(retryDelay)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid retryDelay URL parameter value %q: %w", retryDelay, err)
-			}
-			cfg.RetryDelay = d
-		}
-		if retryMaxDelay := q.Get("retryMaxDelay"); retryMaxDelay != "" {
-			d, err := time.ParseDuration(retryMaxDelay)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid retryMaxDelay URL parameter value %q: %w", retryMaxDelay, err)
-			}
-			cfg.RetryMaxDelay = d
-		}
-
-		// Parse buffer URL parameters
-		if bufferEnabled := q.Get("bufferEnabled"); bufferEnabled != "" {
-			enabled, err := strconv.ParseBool(bufferEnabled)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid bufferEnabled URL parameter value %q: %w", bufferEnabled, err)
-			}
-			cfg.BufferEnabled = enabled
-		}
-		if bufferMaxSamples := q.Get("bufferMaxSamples"); bufferMaxSamples != "" {
-			v, err := strconv.Atoi(bufferMaxSamples)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid bufferMaxSamples URL parameter value %q: %w", bufferMaxSamples, err)
-			}
-			cfg.BufferMaxSamples = v
-		}
-		if bufferDropPolicy := q.Get("bufferDropPolicy"); bufferDropPolicy != "" {
-			cfg.BufferDropPolicy = bufferDropPolicy
+	if params.ConfigArgument != "" {
+		if err := cfg.applyArgument(params.ConfigArgument); err != nil {
+			return cfg, fmt.Errorf("invalid --out argument: %w", err)
 		}
 	}
 
-	// Parse environment variables (highest priority)
-	if addr := os.Getenv("K6_CLICKHOUSE_ADDR"); addr != "" {
-		cfg.Addr = addr
-	}
-	if user := os.Getenv("K6_CLICKHOUSE_USER"); user != "" {
-		cfg.User = user
-	}
-	if password := os.Getenv("K6_CLICKHOUSE_PASSWORD"); password != "" {
-		cfg.Password = password
-	}
-	if db := os.Getenv("K6_CLICKHOUSE_DB"); db != "" {
-		cfg.Database = db
-	}
-	if table := os.Getenv("K6_CLICKHOUSE_TABLE"); table != "" {
-		cfg.Table = table
-	}
-	if pushInterval := os.Getenv("K6_CLICKHOUSE_PUSH_INTERVAL"); pushInterval != "" {
-		d, err := time.ParseDuration(pushInterval)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_PUSH_INTERVAL value %q: %w", pushInterval, err)
+	for _, o := range options {
+		if err := cfg.set(o.key, params.Environment[o.env]); err != nil {
+			return cfg, fmt.Errorf("%s: %w", o.env, err)
 		}
-		cfg.PushInterval = d
-	}
-	if schemaMode := os.Getenv("K6_CLICKHOUSE_SCHEMA_MODE"); schemaMode != "" {
-		cfg.SchemaMode = schemaMode
-	}
-	if skipSchema := os.Getenv("K6_CLICKHOUSE_SKIP_SCHEMA_CREATION"); skipSchema != "" {
-		v, err := strconv.ParseBool(skipSchema)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_SKIP_SCHEMA_CREATION value %q: %w", skipSchema, err)
-		}
-		cfg.SkipSchemaCreation = v
 	}
 
-	// Parse TLS environment variables
-	if tlsEnabled := os.Getenv("K6_CLICKHOUSE_TLS_ENABLED"); tlsEnabled != "" {
-		enabled, err := strconv.ParseBool(tlsEnabled)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_TLS_ENABLED value %q: %w", tlsEnabled, err)
-		}
-		cfg.TLS.Enabled = enabled
-	}
-	if tlsInsecure := os.Getenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY"); tlsInsecure != "" {
-		insecure, err := strconv.ParseBool(tlsInsecure)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY value %q: %w", tlsInsecure, err)
-		}
-		cfg.TLS.InsecureSkipVerify = insecure
-	}
-	if tlsCAFile := os.Getenv("K6_CLICKHOUSE_TLS_CA_FILE"); tlsCAFile != "" {
-		cfg.TLS.CAFile = tlsCAFile
-	}
-	if tlsCertFile := os.Getenv("K6_CLICKHOUSE_TLS_CERT_FILE"); tlsCertFile != "" {
-		cfg.TLS.CertFile = tlsCertFile
-	}
-	if tlsKeyFile := os.Getenv("K6_CLICKHOUSE_TLS_KEY_FILE"); tlsKeyFile != "" {
-		cfg.TLS.KeyFile = tlsKeyFile
-	}
-	if tlsServerName := os.Getenv("K6_CLICKHOUSE_TLS_SERVER_NAME"); tlsServerName != "" {
-		cfg.TLS.ServerName = tlsServerName
-	}
-
-	// Parse retry environment variables
-	if retryAttempts := os.Getenv("K6_CLICKHOUSE_RETRY_ATTEMPTS"); retryAttempts != "" {
-		v, err := strconv.ParseUint(retryAttempts, 10, 32)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_RETRY_ATTEMPTS value %q: %w", retryAttempts, err)
-		}
-		cfg.RetryAttempts = uint(v)
-	}
-	if retryDelay := os.Getenv("K6_CLICKHOUSE_RETRY_DELAY"); retryDelay != "" {
-		d, err := time.ParseDuration(retryDelay)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_RETRY_DELAY value %q: %w", retryDelay, err)
-		}
-		cfg.RetryDelay = d
-	}
-	if retryMaxDelay := os.Getenv("K6_CLICKHOUSE_RETRY_MAX_DELAY"); retryMaxDelay != "" {
-		d, err := time.ParseDuration(retryMaxDelay)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_RETRY_MAX_DELAY value %q: %w", retryMaxDelay, err)
-		}
-		cfg.RetryMaxDelay = d
-	}
-
-	// Parse buffer environment variables
-	if bufferEnabled := os.Getenv("K6_CLICKHOUSE_BUFFER_ENABLED"); bufferEnabled != "" {
-		enabled, err := strconv.ParseBool(bufferEnabled)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_BUFFER_ENABLED value %q: %w", bufferEnabled, err)
-		}
-		cfg.BufferEnabled = enabled
-	}
-	if bufferMaxSamples := os.Getenv("K6_CLICKHOUSE_BUFFER_MAX_SAMPLES"); bufferMaxSamples != "" {
-		v, err := strconv.Atoi(bufferMaxSamples)
-		if err != nil {
-			return cfg, fmt.Errorf("invalid K6_CLICKHOUSE_BUFFER_MAX_SAMPLES value %q: %w", bufferMaxSamples, err)
-		}
-		cfg.BufferMaxSamples = v
-	}
-	if bufferDropPolicy := os.Getenv("K6_CLICKHOUSE_BUFFER_DROP_POLICY"); bufferDropPolicy != "" {
-		cfg.BufferDropPolicy = bufferDropPolicy
-	}
-
-	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return cfg, nil
+}
+
+// applyJSON applies the collectors.xk6-clickhouse object. TLS options may be
+// nested in a "tls" object.
+func (c *Config) applyJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+
+	if raw, ok := fields["tls"]; ok {
+		delete(fields, "tls")
+		var tlsFields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &tlsFields); err != nil {
+			return fmt.Errorf("invalid tls value: %w", err)
+		}
+		for name, v := range tlsFields {
+			key, ok := jsonTLSKeys[name]
+			if !ok {
+				return fmt.Errorf("unknown tls option %q (valid tls options: %s)",
+					name, strings.Join(slices.Sorted(maps.Keys(jsonTLSKeys)), ", "))
+			}
+			if _, dup := fields[key]; dup {
+				return fmt.Errorf("both tls.%s and %s are set", name, key)
+			}
+			fields[key] = v
+		}
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(fields)) {
+		if !isOption(key) {
+			return unknownOptionError(key)
+		}
+		value, err := jsonScalar(fields[key])
+		if err != nil {
+			return fmt.Errorf("invalid %s value: %w", key, err)
+		}
+		if err := c.set(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// jsonScalar returns the option text of a JSON value: a string's contents, a
+// number's or boolean's literal, or "" (unset) for null.
+func jsonScalar(raw json.RawMessage) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return "", err
+	}
+	switch v := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return v, nil
+	case bool:
+		return strconv.FormatBool(v), nil
+	case json.Number:
+		return v.String(), nil
+	default:
+		return "", errors.New("must be a string, number, boolean or null")
+	}
+}
+
+// applyArgument applies the --out argument: a bare "host:port[?query]", or a
+// URL with a scheme whose host and query are used.
+func (c *Config) applyArgument(arg string) error {
+	// A bare "host:port" is not a URL — url.Parse would misread the host as a
+	// scheme. Only parse as a URL when a scheme ("://") is present.
+	addr, rawQuery, _ := strings.Cut(arg, "?")
+	if strings.Contains(arg, "://") {
+		u, err := url.Parse(arg)
+		if err != nil {
+			return err
+		}
+		addr, rawQuery = u.Host, u.RawQuery
+	}
+
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return err
+	}
+	if err := c.set("addr", addr); err != nil {
+		return err
+	}
+	for _, key := range slices.Sorted(maps.Keys(query)) {
+		if err := c.set(key, query.Get(key)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unknownEnvVars returns the sorted K6_CLICKHOUSE_* variables in env that
+// match no option, such as misspelled names.
+func unknownEnvVars(env map[string]string) []string {
+	var unknown []string
+	for name := range env {
+		if strings.HasPrefix(name, envPrefix) &&
+			!slices.ContainsFunc(options, func(o option) bool { return o.env == name }) {
+			unknown = append(unknown, name)
+		}
+	}
+	slices.Sort(unknown)
+	return unknown
 }
 
 // BuildTLSConfig builds a *tls.Config from the TLSConfig settings

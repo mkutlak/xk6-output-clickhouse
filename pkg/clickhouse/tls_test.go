@@ -461,24 +461,32 @@ func TestParseConfig_TLS_URL(t *testing.T) {
 }
 
 func TestParseConfig_TLS_Environment(t *testing.T) {
-	t.Run("TLS enabled via ENV", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
+	t.Parallel()
 
-		params := output.Params{}
+	t.Run("TLS enabled via ENV", func(t *testing.T) {
+		t.Parallel()
+
+		params := output.Params{
+			Environment: map[string]string{"K6_CLICKHOUSE_TLS_ENABLED": "true"},
+		}
 		cfg, err := ParseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 	})
 
 	t.Run("TLS with all options via ENV", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY", "false")
-		t.Setenv("K6_CLICKHOUSE_TLS_CA_FILE", testCACertFile)
-		t.Setenv("K6_CLICKHOUSE_TLS_CERT_FILE", testClientCert)
-		t.Setenv("K6_CLICKHOUSE_TLS_KEY_FILE", testClientKey)
-		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "clickhouse.local")
+		t.Parallel()
 
-		params := output.Params{}
+		params := output.Params{
+			Environment: map[string]string{
+				"K6_CLICKHOUSE_TLS_ENABLED":              "true",
+				"K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY": "false",
+				"K6_CLICKHOUSE_TLS_CA_FILE":              testCACertFile,
+				"K6_CLICKHOUSE_TLS_CERT_FILE":            testClientCert,
+				"K6_CLICKHOUSE_TLS_KEY_FILE":             testClientKey,
+				"K6_CLICKHOUSE_TLS_SERVER_NAME":          "clickhouse.local",
+			},
+		}
 		cfg, err := ParseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
@@ -491,9 +499,10 @@ func TestParseConfig_TLS_Environment(t *testing.T) {
 }
 
 func TestParseConfig_TLS_Priority(t *testing.T) {
+	t.Parallel()
+
 	t.Run("ENV overrides JSON", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_TLS_ENABLED", "true")
-		t.Setenv("K6_CLICKHOUSE_TLS_SERVER_NAME", "env.example.com")
+		t.Parallel()
 
 		params := output.Params{
 			JSONConfig: mustMarshalJSON(map[string]any{
@@ -502,6 +511,10 @@ func TestParseConfig_TLS_Priority(t *testing.T) {
 					"serverName": "json.example.com",
 				},
 			}),
+			Environment: map[string]string{
+				"K6_CLICKHOUSE_TLS_ENABLED":     "true",
+				"K6_CLICKHOUSE_TLS_SERVER_NAME": "env.example.com",
+			},
 		}
 
 		cfg, err := ParseConfig(params)

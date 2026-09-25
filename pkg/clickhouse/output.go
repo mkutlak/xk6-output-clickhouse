@@ -84,10 +84,15 @@ func New(params output.Params) (output.Output, error) {
 	if logger == nil {
 		logger = logrus.New()
 	}
+	logger = logger.WithField("output", "clickhouse")
+
+	if unknown := unknownEnvVars(params.Environment); len(unknown) > 0 {
+		logger.Warnf("Ignoring unknown environment variables: %s", strings.Join(unknown, ", "))
+	}
 
 	return &Output{
 		config: cfg,
-		logger: logger.WithField("output", "clickhouse"),
+		logger: logger,
 	}, nil
 }
 

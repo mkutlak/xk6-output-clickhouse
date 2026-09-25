@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.k6.io/k6/v2/metrics"
@@ -61,7 +62,7 @@ func TestNew(t *testing.T) {
 				JSONConfig: []byte(`{invalid`),
 			},
 			expectError:   true,
-			errorContains: "failed to parse json config",
+			errorContains: "json config: invalid character",
 		},
 		{
 			name: "invalid pushInterval in json",
@@ -525,6 +526,23 @@ func TestNew_FallbackLogger(t *testing.T) {
 	out, err := New(params)
 	require.NoError(t, err)
 	assert.NotNil(t, out.(*Output).logger)
+}
+
+func TestNew_WarnsOnUnknownEnvVars(t *testing.T) {
+	t.Parallel()
+
+	logger, hook := logrustest.NewNullLogger()
+	_, err := New(output.Params{
+		Logger: logger,
+		Environment: map[string]string{
+			"K6_CLICKHOUSE_DB":       "k6",
+			"K6_CLICKHOUSE_DATABASE": "metrics",
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, hook.AllEntries(), 1)
+	assert.Equal(t, logrus.WarnLevel, hook.LastEntry().Level)
+	assert.Equal(t, "Ignoring unknown environment variables: K6_CLICKHOUSE_DATABASE", hook.LastEntry().Message)
 }
 
 // mustMarshalJSON is defined in config_test.go
