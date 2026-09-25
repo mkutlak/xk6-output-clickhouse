@@ -91,7 +91,7 @@ jobs:
       - name: Run integration tests
         env:
           CLICKHOUSE_VERSION: 26.3-alpine
-        run: make docker-ci
+        run: make docker-test
         timeout-minutes: 10
 
       - name: Collect Docker logs

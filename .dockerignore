@@ -62,5 +62,3 @@ examples/
 .env
 .env.local
 *.log
-grafana-xk6-output-influxdb.txt
-modtools_frozen.yml
