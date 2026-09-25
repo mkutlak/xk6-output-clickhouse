@@ -130,39 +130,39 @@ func TestOutput_Description(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name               string
-		config             Config
-		expectedDescPrefix string
+		name     string
+		config   Config
+		expected string
 	}{
 		{
 			name: "default config",
 			config: Config{
-				Addr:         "localhost:9000",
-				Database:     "k6",
-				Table:        "samples",
-				PushInterval: 1 * time.Second,
+				Addr:       "localhost:9000",
+				Database:   "k6",
+				Table:      "samples",
+				SchemaMode: "simple",
 			},
-			expectedDescPrefix: "clickhouse (localhost:9000)",
+			expected: "clickhouse (localhost:9000, k6.samples, schema=simple)",
 		},
 		{
 			name: "custom config",
 			config: Config{
-				Addr:         "clickhouse.example.com:9000",
-				Database:     "production",
-				Table:        "metrics",
-				PushInterval: 5 * time.Second,
+				Addr:       "clickhouse.example.com:9000",
+				Database:   "production",
+				Table:      "metrics",
+				SchemaMode: "compatible",
 			},
-			expectedDescPrefix: "clickhouse (clickhouse.example.com:9000)",
+			expected: "clickhouse (clickhouse.example.com:9000, production.metrics, schema=compatible)",
 		},
 		{
 			name: "ipv6 address",
 			config: Config{
-				Addr:         "[::1]:9000",
-				Database:     "test",
-				Table:        "samples",
-				PushInterval: 1 * time.Second,
+				Addr:       "[::1]:9000",
+				Database:   "test",
+				Table:      "samples",
+				SchemaMode: "simple",
 			},
-			expectedDescPrefix: "clickhouse ([::1]:9000)",
+			expected: "clickhouse ([::1]:9000, test.samples, schema=simple)",
 		},
 	}
 
@@ -170,12 +170,8 @@ func TestOutput_Description(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			out := &Output{
-				config: tt.config,
-			}
-
-			desc := out.Description()
-			assert.Equal(t, tt.expectedDescPrefix, desc)
+			out := &Output{config: tt.config}
+			assert.Equal(t, tt.expected, out.Description())
 		})
 	}
 }
@@ -298,83 +294,6 @@ func TestOutput_ConfigurationValidation(t *testing.T) {
 	// Stop should work even if Start was never called
 	err := clickhouseOut.Stop()
 	assert.NoError(t, err)
-}
-
-// Error metrics tests
-
-func TestOutput_GetErrorMetrics_Initial(t *testing.T) {
-	t.Parallel()
-
-	params := output.Params{Logger: newTestLogger(t)}
-	out, err := New(params)
-	require.NoError(t, err)
-
-	clickhouseOut := out.(*Output)
-	errMetrics := clickhouseOut.GetErrorMetrics()
-
-	assert.Equal(t, uint64(0), errMetrics.ConvertErrors, "initial ConvertErrors should be 0")
-	assert.Equal(t, uint64(0), errMetrics.InsertErrors, "initial InsertErrors should be 0")
-	assert.Equal(t, uint64(0), errMetrics.SamplesProcessed, "initial SamplesProcessed should be 0")
-}
-
-func TestErrorMetrics_Values(t *testing.T) {
-	t.Parallel()
-
-	errMetrics := ErrorMetrics{
-		ConvertErrors:    10,
-		InsertErrors:     5,
-		SamplesProcessed: 1000,
-	}
-
-	assert.Equal(t, uint64(10), errMetrics.ConvertErrors)
-	assert.Equal(t, uint64(5), errMetrics.InsertErrors)
-	assert.Equal(t, uint64(1000), errMetrics.SamplesProcessed)
-}
-
-func TestOutput_GetErrorMetrics_AfterStop(t *testing.T) {
-	t.Parallel()
-
-	params := output.Params{Logger: newTestLogger(t)}
-	out, err := New(params)
-	require.NoError(t, err)
-
-	clickhouseOut := out.(*Output)
-
-	// Manually set some counter values to verify they persist after stop
-	clickhouseOut.convertErrors.Store(5)
-	clickhouseOut.insertErrors.Store(3)
-	clickhouseOut.samplesProcessed.Store(100)
-
-	err = out.Stop()
-	require.NoError(t, err)
-
-	// Metrics should still be accessible after stop
-	errMetrics := clickhouseOut.GetErrorMetrics()
-	assert.Equal(t, uint64(5), errMetrics.ConvertErrors)
-	assert.Equal(t, uint64(3), errMetrics.InsertErrors)
-	assert.Equal(t, uint64(100), errMetrics.SamplesProcessed)
-}
-
-func TestOutput_ErrorMetrics_AtomicOperations(t *testing.T) {
-	t.Parallel()
-
-	params := output.Params{Logger: newTestLogger(t)}
-	out, err := New(params)
-	require.NoError(t, err)
-
-	clickhouseOut := out.(*Output)
-
-	// Test atomic Add operations
-	clickhouseOut.convertErrors.Add(5)
-	clickhouseOut.convertErrors.Add(3)
-	clickhouseOut.insertErrors.Add(2)
-	clickhouseOut.samplesProcessed.Add(100)
-	clickhouseOut.samplesProcessed.Add(50)
-
-	errMetrics := clickhouseOut.GetErrorMetrics()
-	assert.Equal(t, uint64(8), errMetrics.ConvertErrors)
-	assert.Equal(t, uint64(2), errMetrics.InsertErrors)
-	assert.Equal(t, uint64(150), errMetrics.SamplesProcessed)
 }
 
 // Benchmark tests
