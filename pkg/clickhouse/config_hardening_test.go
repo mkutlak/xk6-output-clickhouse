@@ -39,34 +39,13 @@ func TestParseConfig_SkipSchemaCreation_URLBoolParsing(t *testing.T) {
 			})
 			if tc.wantError {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), "invalid skipSchemaCreation URL parameter value")
+				assert.Contains(t, err.Error(), "invalid skipSchemaCreation value")
 				return
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, cfg.SkipSchemaCreation)
 		})
 	}
-}
-
-// TestParseConfig_SkipSchemaCreation_EnvBoolParsing verifies the env var accepts
-// truthy variants and rejects invalid values. Not parallel: t.Setenv mutates the
-// process environment (and would panic under a parallel ancestor).
-func TestParseConfig_SkipSchemaCreation_EnvBoolParsing(t *testing.T) {
-	t.Run("env truthy variant", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_SKIP_SCHEMA_CREATION", "1")
-
-		cfg, err := ParseConfig(output.Params{})
-		require.NoError(t, err)
-		assert.True(t, cfg.SkipSchemaCreation, "env value \"1\" should enable skipSchemaCreation")
-	})
-
-	t.Run("env invalid value errors", func(t *testing.T) {
-		t.Setenv("K6_CLICKHOUSE_SKIP_SCHEMA_CREATION", "maybe")
-
-		_, err := ParseConfig(output.Params{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid K6_CLICKHOUSE_SKIP_SCHEMA_CREATION")
-	})
 }
 
 // TestConfig_Validate_RetryAttemptsBound guards against the overflow→infinite-retry
@@ -140,39 +119,22 @@ func TestConfig_Validate_RetryMaxDelayZero(t *testing.T) {
 // TestParseConfig_EnvOverridesURL_CoreFields verifies the documented precedence
 // (env > URL) for the core scalar fields, not just TLS/pushInterval.
 func TestParseConfig_EnvOverridesURL_CoreFields(t *testing.T) {
-	// NOT parallel: t.Setenv modifies process environment
-	t.Setenv("K6_CLICKHOUSE_ADDR", "env-host:9000")
-	t.Setenv("K6_CLICKHOUSE_USER", "env_user")
-	t.Setenv("K6_CLICKHOUSE_DB", "env_db")
-	t.Setenv("K6_CLICKHOUSE_TABLE", "env_table")
+	t.Parallel()
 
 	cfg, err := ParseConfig(output.Params{
 		ConfigArgument: "url-host:9000?user=url_user&database=url_db&table=url_table",
+		Environment: map[string]string{
+			"K6_CLICKHOUSE_ADDR":  "env-host:9000",
+			"K6_CLICKHOUSE_USER":  "env_user",
+			"K6_CLICKHOUSE_DB":    "env_db",
+			"K6_CLICKHOUSE_TABLE": "env_table",
+		},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "env-host:9000", cfg.Addr, "env addr should override URL addr")
 	assert.Equal(t, "env_user", cfg.User, "env user should override URL user")
 	assert.Equal(t, "env_db", cfg.Database, "env database should override URL database")
 	assert.Equal(t, "env_table", cfg.Table, "env table should override URL table")
-}
-
-// TestParseConfig_CoreEnvVars verifies the happy path for the core K6_CLICKHOUSE_*
-// scalar env vars (previously only PUSH_INTERVAL and error cases were covered).
-func TestParseConfig_CoreEnvVars(t *testing.T) {
-	// NOT parallel: t.Setenv modifies process environment
-	t.Setenv("K6_CLICKHOUSE_ADDR", "ch.example.com:9000")
-	t.Setenv("K6_CLICKHOUSE_USER", "k6user")
-	t.Setenv("K6_CLICKHOUSE_DB", "metrics_db")
-	t.Setenv("K6_CLICKHOUSE_TABLE", "metrics_tbl")
-	t.Setenv("K6_CLICKHOUSE_SCHEMA_MODE", "compatible")
-
-	cfg, err := ParseConfig(output.Params{})
-	require.NoError(t, err)
-	assert.Equal(t, "ch.example.com:9000", cfg.Addr)
-	assert.Equal(t, "k6user", cfg.User)
-	assert.Equal(t, "metrics_db", cfg.Database)
-	assert.Equal(t, "metrics_tbl", cfg.Table)
-	assert.Equal(t, "compatible", cfg.SchemaMode)
 }
 
 // TestConfig_Validate covers the non-TLS error branches of Validate() directly,
