@@ -6,8 +6,8 @@ empty value (empty string, JSON `null`, unset env var) leaves a
 lower-priority source's value in place — it never resets a field to `""`.
 
 An unknown `--out` query parameter or JSON key fails startup, listing valid
-keys. An unknown `K6_CLICKHOUSE_*` env var only logs a warning and is
-ignored.
+keys. JSON keys match case-insensitively; query parameters do not. An unknown
+`K6_CLICKHOUSE_*` env var only logs a warning and is ignored.
 
 ## The `--out` argument
 
@@ -15,8 +15,8 @@ A ClickHouse DSN:
 `[clickhouse://][user[:password]@]host:port[/database][?option=value&...]`.
 A bare `host:port` is accepted (`clickhouse://` is assumed); any other scheme
 is rejected. Query options override the userinfo/path for the same key.
-Percent-encode `#` and other reserved characters in a password (`#` →
-`%23`).
+Percent-encode reserved characters (`@ : / ? # %`) in the user name and
+password (`#` → `%23`).
 
 ```bash
 # bare host

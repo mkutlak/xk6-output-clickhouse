@@ -1,10 +1,14 @@
 package clickhouse
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -449,6 +453,85 @@ func TestIsRetryableError_CommitError(t *testing.T) {
 		ce := &commitError{err: errors.New("some db error")}
 		assert.Contains(t, ce.Error(), "commit error: some db error")
 	})
+}
+
+// TestWrite_RetryCancelledDuringBackoff guards that a retry cut short by ctx
+// during the backoff wait is not counted.
+func TestWrite_RetryCancelledDuringBackoff(t *testing.T) {
+	t.Parallel()
+
+	o := newTestOutput(t, map[string]any{
+		"retryAttempts": 3,
+		"retryDelay":    "1m",
+		"retryMaxDelay": "1m",
+	})
+	o.db = refusingDB(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	_, err := o.write(ctx, makeSamples(t, 1))
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Zero(t, o.stats.retries)
+}
+
+// fakeDB is a database/sql driver that accepts any statement. When cancel is
+// set, executing a statement calls it, as if a deadline expired between
+// sending the rows and committing them.
+type fakeDB struct {
+	cancel    context.CancelFunc
+	committed atomic.Bool
+}
+
+func (d *fakeDB) Connect(context.Context) (driver.Conn, error) { return d, nil }
+func (d *fakeDB) Driver() driver.Driver                        { return d }
+func (d *fakeDB) Open(string) (driver.Conn, error)             { return d, nil }
+func (d *fakeDB) Prepare(string) (driver.Stmt, error)          { return d, nil }
+func (d *fakeDB) Begin() (driver.Tx, error)                    { return d, nil }
+func (d *fakeDB) Close() error                                 { return nil }
+func (d *fakeDB) NumInput() int                                { return -1 }
+func (d *fakeDB) Query([]driver.Value) (driver.Rows, error)    { return nil, errors.New("unsupported") }
+func (d *fakeDB) Rollback() error                              { return nil }
+func (d *fakeDB) Commit() error                                { d.committed.Store(true); return nil }
+func (d *fakeDB) Exec([]driver.Value) (driver.Result, error) {
+	if d.cancel != nil {
+		d.cancel()
+	}
+	return driver.RowsAffected(1), nil
+}
+
+// TestInsertRows_ContextDoneBeforeCommit guards that rows whose context ends
+// before Commit are reported as lost, not as an ambiguous commit error counted
+// as written: database/sql rolls such a transaction back.
+func TestInsertRows_ContextDoneBeforeCommit(t *testing.T) {
+	t.Parallel()
+
+	for _, cancelled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancelled=%v", cancelled), func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			fake := &fakeDB{}
+			if cancelled {
+				fake.cancel = cancel
+			}
+			o := newTestOutput(t)
+			o.db = sql.OpenDB(fake)
+			t.Cleanup(func() { _ = o.db.Close() })
+
+			err := o.insertRows(ctx, [][]any{{1}})
+			if !cancelled {
+				require.NoError(t, err)
+				assert.True(t, fake.committed.Load())
+				assert.Equal(t, uint64(1), o.stats.written)
+				return
+			}
+			require.ErrorIs(t, err, context.Canceled)
+			assert.False(t, isCommitError(err))
+			assert.False(t, fake.committed.Load())
+			assert.Zero(t, o.stats.written)
+		})
+	}
 }
 
 func TestBound(t *testing.T) {

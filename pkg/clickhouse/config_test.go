@@ -374,6 +374,21 @@ func TestApplyArgument(t *testing.T) {
 			wantErr:     true,
 			errContains: "single database segment",
 		},
+		{
+			name:         "'@' in a query value",
+			arg:          "dbhost:9000?user=bob@corp",
+			wantAddr:     "dbhost:9000",
+			wantUser:     "bob@corp",
+			wantDatabase: "k6",
+		},
+		{
+			name:         "percent-encoded '/' and '?' in password",
+			arg:          "clickhouse://u:p%2Fw%3Fx@host:9000",
+			wantAddr:     "host:9000",
+			wantUser:     "u",
+			wantPassword: "p/w?x",
+			wantDatabase: "k6",
+		},
 	}
 
 	for _, tt := range tests {
@@ -403,6 +418,58 @@ func TestApplyArgument(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseConfig_MalformedDSNHidesPassword guards that an unencoded reserved
+// character in the userinfo, which pushes the rest of the password into the
+// host, path or a query key, never surfaces the password in an error.
+func TestParseConfig_MalformedDSNHidesPassword(t *testing.T) {
+	t.Parallel()
+
+	for _, arg := range []string{
+		"clickhouse://alice:s3cret/pw@dbhost:9000",
+		"clickhouse://alice:123?topsecret@dbhost:9000",
+		"clickhouse://alice:123/topsecret@dbhost:9000",
+		"clickhouse://bob@alice:123/topsecret@dbhost:9000",
+		"alice:123?topsecret@dbhost:9000",
+	} {
+		t.Run(arg, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseConfig(output.Params{ConfigArgument: arg})
+			require.ErrorIs(t, err, errMalformedDSN)
+			assert.NotContains(t, err.Error(), "s3cret")
+			assert.NotContains(t, err.Error(), "topsecret")
+		})
+	}
+}
+
+// TestApplyArgument_SchemeOnlyAtStart guards that a "://" later in the
+// argument is not mistaken for a scheme.
+func TestApplyArgument_SchemeOnlyAtStart(t *testing.T) {
+	t.Parallel()
+
+	for arg, want := range map[string]bool{
+		"clickhouse://dbhost:9000":           true,
+		"http://dbhost:9000":                 true,
+		"dbhost:9000":                        false,
+		"host:9000?tlsCAFile=file:///ca.pem": false,
+		"alice:pa://ss@dbhost:9000":          false,
+	} {
+		assert.Equal(t, want, schemeRegex.MatchString(arg), arg)
+	}
+
+	cfg := defaultConfig()
+	require.NoError(t, cfg.applyArgument("host:9000?tlsCAFile=file:///ca.pem"))
+	assert.Equal(t, "host:9000", cfg.Addr)
+	assert.Equal(t, "file:///ca.pem", cfg.TLS.CAFile)
+
+	// Parsed as a bare host, the unencoded '/' in the password is reported
+	// rather than a bogus "alice" scheme.
+	cfg = defaultConfig()
+	err := cfg.applyArgument("alice:pa://ss@dbhost:9000")
+	require.ErrorIs(t, err, errMalformedDSN)
+	assert.NotContains(t, err.Error(), "alice")
 }
 
 func TestConfig_Struct(t *testing.T) {
@@ -588,6 +655,11 @@ func TestParseConfig_InvalidURLParams(t *testing.T) {
 			name:          "unknown URL param",
 			urlParam:      "localhost:9000?databse=prod",
 			errorContains: `invalid --out argument: unknown option "databse" (valid options: addr, user, password, database, table,`,
+		},
+		{
+			name:          "URL param keys are case-sensitive",
+			urlParam:      "localhost:9000?PushInterval=5s",
+			errorContains: `invalid --out argument: unknown option "PushInterval"`,
 		},
 		{
 			name:          "unknown URL param with empty value",
@@ -805,11 +877,28 @@ func TestParseConfig_JSONValues(t *testing.T) {
 		assert.True(t, cfg.TLS.Enabled)
 	})
 
+	t.Run("keys match case-insensitively", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := parseConfig(output.Params{
+			JSONConfig: []byte(`{"PushInterval": "5s", "TLS": {"Enabled": true, "CAFile": "ca.pem"}, "TLSSERVERNAME": "ch"}`),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 5*time.Second, cfg.PushInterval)
+		assert.True(t, cfg.TLS.Enabled)
+		assert.Equal(t, "ca.pem", cfg.TLS.CAFile)
+		assert.Equal(t, "ch", cfg.TLS.ServerName)
+	})
+
 	errorCases := []struct{ name, json, errorContains string }{
 		{"unknown key", `{"databse": "k6"}`, `json config: unknown option "databse" (valid options: addr, user,`},
 		{"unknown tls key", `{"tls": {"ca": "ca.pem"}}`, `json config: unknown tls option "ca" (valid tls options: caFile, certFile, enabled, insecureSkipVerify, keyFile, serverName)`},
 		{"tls not an object", `{"tls": true}`, "json config: invalid tls value"},
 		{"tls key also set flat", `{"tlsEnabled": true, "tls": {"enabled": false}}`, "json config: both tls.enabled and tlsEnabled are set"},
+		{"tls key also set flat, other case", `{"TLSEnabled": true, "tls": {"Enabled": false}}`, "json config: both tls.enabled and tlsEnabled are set"},
+		{"key set twice in different case", `{"pushInterval": "1s", "PushInterval": "2s"}`, "json config: pushInterval is set more than once"},
+		{"tls key set twice in different case", `{"tls": {"caFile": "a", "CAFile": "b"}}`, "json config: tls.caFile is set more than once"},
+		{"tls set twice in different case", `{"tls": {}, "TLS": {}}`, "json config: tls is set more than once"},
 		{"object value", `{"database": {"name": "k6"}}`, "json config: invalid database value: must be a string, number, boolean or null"},
 		{"array value", `{"addr": ["a:9000", "b:9000"]}`, "json config: invalid addr value: must be a string, number, boolean or null"},
 		{"fractional number", `{"retryAttempts": 1.5}`, `json config: invalid retryAttempts value "1.5"`},
