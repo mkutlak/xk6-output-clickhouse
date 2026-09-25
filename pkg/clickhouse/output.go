@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -33,6 +32,10 @@ func isCommitError(err error) bool {
 	_, ok := errors.AsType[*commitError](err)
 	return ok
 }
+
+// errNotStarted is returned when writing before Start connected to ClickHouse.
+// It is not retryable.
+var errNotStarted = errors.New("output not started")
 
 // escapeIdentifier escapes a ClickHouse identifier with backticks
 func escapeIdentifier(name string) string {
@@ -58,42 +61,11 @@ type Output struct {
 	// stopped.
 	pending []metrics.Sample
 
-	// Error metrics (atomic for lock-free concurrent access)
-	convertErrors    atomic.Uint64 // Cumulative count of sample conversion failures
-	insertErrors     atomic.Uint64 // Cumulative count of database insert failures
-	samplesProcessed atomic.Uint64 // Cumulative count of successfully inserted samples
-
-	// Resilience metrics (atomic for lock-free concurrent access)
-	retryAttempts  atomic.Uint64 // Total retry attempts across all flushes
-	flushFailures  atomic.Uint64 // Flushes that failed after all retries
-	droppedSamples atomic.Uint64 // Samples dropped: overflow, buffering disabled, or lost at shutdown
-}
-
-// ErrorMetrics contains cumulative error statistics from flush operations.
-// All counters are cumulative since output startup and are thread-safe.
-type ErrorMetrics struct {
-	// ConvertErrors is the total number of sample conversion failures.
-	// These occur when a k6 sample cannot be transformed to a database row.
-	ConvertErrors uint64
-
-	// InsertErrors is the total number of database insert failures.
-	// These occur when ExecContext fails for individual samples.
-	InsertErrors uint64
-
-	// SamplesProcessed is the total number of samples successfully inserted.
-	SamplesProcessed uint64
-
-	// RetryAttempts is the total number of retry attempts across all flushes.
-	// High values indicate frequent transient connection issues.
-	RetryAttempts uint64
-
-	// FlushFailures is the count of flushes that failed after exhausting all retries.
-	// These failures result in samples being buffered (if enabled) or lost.
-	FlushFailures uint64
-
-	// DroppedSamples is the total number of samples dropped: buffer overflow,
-	// buffering disabled, or undrainable at shutdown.
-	DroppedSamples uint64
+	// stats are written only by the flusher goroutine, and read by Stop
+	// after the flusher has stopped.
+	stats struct {
+		written, convertErrors, insertErrors, retries, flushFailures, dropped uint64
+	}
 }
 
 // Compile-time assertion that *Output satisfies k6's output.Output interface.
@@ -121,7 +93,8 @@ func New(params output.Params) (output.Output, error) {
 
 // Description returns a human-readable description
 func (o *Output) Description() string {
-	return fmt.Sprintf("clickhouse (%s)", o.config.Addr)
+	return fmt.Sprintf("clickhouse (%s, %s.%s, schema=%s)",
+		o.config.Addr, o.config.Database, o.config.Table, o.config.SchemaMode)
 }
 
 // Start connects to ClickHouse, creates the schema unless skipped, and starts
@@ -249,41 +222,27 @@ func (o *Output) stop() {
 		o.periodicFlusher.Stop()
 	}
 
-	// Final attempt to drain pending samples before shutdown
+	// Final attempt to drain pending samples before shutdown. write retries
+	// with the normal backoff policy: the outage that filled the buffer may
+	// still be flapping.
 	if len(o.pending) > 0 {
 		samples := o.pending
 		o.pending = nil
 		o.logger.WithField("bufferedSamples", len(samples)).Info("Draining pending samples on shutdown")
 
-		// Retry the final drain with the same backoff policy as a normal flush.
-		// The outage that filled the buffer may still be flapping, so a single
-		// unretried attempt would needlessly lose data inside the drain window.
-		err := errors.New("output was not started")
-		if o.db != nil {
-			drainCtx, drainCancel := context.WithTimeout(context.Background(), drainTimeout)
-			err = retry.Do(
-				func() error { return o.doFlush(drainCtx, samples) },
-				retry.Attempts(o.config.RetryAttempts+1),
-				retry.Delay(o.config.RetryDelay),
-				retry.MaxDelay(o.config.RetryMaxDelay),
-				retry.DelayType(retry.BackOffDelay),
-				retry.Context(drainCtx),
-				retry.RetryIf(isRetryableError),
-			)
-			drainCancel()
-		}
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), drainTimeout)
+		kept, err := o.write(drainCtx, samples)
+		drainCancel()
 		switch {
 		case err == nil:
-			o.logger.WithField("flushedSamples", len(samples)).Info("Successfully drained pending samples")
+			o.logger.WithField("flushedSamples", len(kept)).Info("Successfully drained pending samples")
 		case isCommitError(err):
 			// Commit errors are ambiguous — the server may already hold the data.
 			// Don't count them as dropped (mirrors flush()).
-			o.logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error during shutdown drain (data may already be persisted)")
+			o.logger.WithError(err).WithField("samples", len(kept)).Warn("Commit error during shutdown drain (data may already be persisted)")
 		default:
-			// Unrecoverable at shutdown; count the loss so the final metrics
-			// summary is accurate instead of silently under-reporting drops.
-			o.droppedSamples.Add(uint64(len(samples)))
-			o.logger.WithError(err).WithField("lostSamples", len(samples)).Warn("Failed to drain buffer on shutdown, data lost")
+			o.stats.dropped += uint64(len(kept))
+			o.logger.WithError(err).WithField("lostSamples", len(kept)).Warn("Failed to drain buffer on shutdown, data lost")
 		}
 	}
 
@@ -291,34 +250,25 @@ func (o *Output) stop() {
 		_ = o.db.Close()
 	}
 
-	// Log final metrics
-	errStats := o.GetErrorMetrics()
-	o.logger.WithFields(logrus.Fields{
-		"samplesProcessed": errStats.SamplesProcessed,
-		"convertErrors":    errStats.ConvertErrors,
-		"insertErrors":     errStats.InsertErrors,
-		"retryAttempts":    errStats.RetryAttempts,
-		"flushFailures":    errStats.FlushFailures,
-		"droppedSamples":   errStats.DroppedSamples,
-	}).Info("ClickHouse output stopped")
-}
-
-// GetErrorMetrics returns cumulative error statistics from flush operations.
-// All counters are thread-safe and can be called concurrently with flush operations.
-func (o *Output) GetErrorMetrics() ErrorMetrics {
-	return ErrorMetrics{
-		ConvertErrors:    o.convertErrors.Load(),
-		InsertErrors:     o.insertErrors.Load(),
-		SamplesProcessed: o.samplesProcessed.Load(),
-		RetryAttempts:    o.retryAttempts.Load(),
-		FlushFailures:    o.flushFailures.Load(),
-		DroppedSamples:   o.droppedSamples.Load(),
+	s := o.stats
+	log := o.logger.WithFields(logrus.Fields{
+		"samplesProcessed": s.written,
+		"convertErrors":    s.convertErrors,
+		"insertErrors":     s.insertErrors,
+		"retryAttempts":    s.retries,
+		"flushFailures":    s.flushFailures,
+		"droppedSamples":   s.dropped,
+	})
+	if s.dropped > 0 || s.convertErrors > 0 || s.flushFailures > 0 {
+		log.Warn("ClickHouse output stopped")
+	} else {
+		log.Info("ClickHouse output stopped")
 	}
 }
 
 // isRetryableError checks if an error is transient and worth retrying.
 // Connection errors, timeouts, and temporary network issues are retryable.
-// Conversion errors and data validation errors are not.
+// Commit errors, errNotStarted and data validation errors are not.
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
@@ -375,58 +325,92 @@ func (o *Output) flush() {
 	}
 
 	start := time.Now()
-	retryAttempts := o.config.RetryAttempts
+	kept, err := o.write(context.Background(), samples)
+	if err == nil {
+		o.logger.WithFields(logrus.Fields{
+			"samples": len(kept),
+			"elapsed": time.Since(start),
+		}).Debug("Flushed samples")
+		return
+	}
 
-	// Wrap flush in retry logic
+	o.stats.flushFailures++
+	log := o.logger.WithError(err).WithField("elapsed", time.Since(start))
+	switch {
+	case isCommitError(err):
+		// Commit errors are ambiguous — data may already be persisted.
+		// Do NOT buffer these samples to avoid duplication on next flush.
+		log.WithField("samples", len(kept)).Warn("Flush commit failed (data may already be persisted), not buffering samples")
+	case !o.config.BufferEnabled:
+		o.stats.dropped += uint64(len(kept))
+		log.WithField("lostSamples", len(kept)).Error("Flush failed, samples lost (buffering disabled)")
+	default:
+		var dropped int
+		o.pending, dropped = bound(kept, o.config.BufferMaxSamples, o.config.BufferDropPolicy)
+		o.stats.dropped += uint64(dropped)
+		log.WithFields(logrus.Fields{
+			"buffered": len(o.pending),
+			"dropped":  dropped,
+		}).Warn("Flush failed, samples buffered for retry")
+	}
+}
+
+// write converts samples to rows once, then inserts the rows, retrying
+// transient database errors. Samples that fail conversion are counted and
+// discarded. It returns the converted samples, for re-buffering on error.
+func (o *Output) write(ctx context.Context, samples []metrics.Sample) ([]metrics.Sample, error) {
+	ok := samples[:0]
+	rows := make([][]any, 0, len(samples))
+	var convertErrors uint64
+	var firstErr error
+	for _, sample := range samples {
+		row, err := o.schema.Row(sample)
+		if err != nil {
+			if convertErrors == 0 {
+				firstErr = err
+			}
+			convertErrors++
+			continue
+		}
+		ok = append(ok, sample)
+		rows = append(rows, row)
+	}
+	clear(samples[len(ok):])
+
+	if convertErrors > 0 {
+		o.stats.convertErrors += convertErrors
+		o.logger.WithError(firstErr).WithFields(logrus.Fields{
+			"convertErrors": convertErrors,
+			"totalSamples":  len(samples),
+		}).Warn("Failed to convert samples, skipping them")
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	attempts := o.config.RetryAttempts + 1 // the initial attempt plus retries
 	err := retry.Do(
-		func() error {
-			return o.doFlush(context.Background(), samples)
-		},
-		retry.Attempts(retryAttempts+1), // +1 because Attempts includes the initial attempt
+		func() error { return o.insertRows(ctx, rows) },
+		retry.Attempts(attempts),
 		retry.Delay(o.config.RetryDelay),
 		retry.MaxDelay(o.config.RetryMaxDelay),
 		retry.DelayType(retry.BackOffDelay),
+		retry.Context(ctx),
+		retry.RetryIf(isRetryableError),
 		retry.OnRetry(func(n uint, err error) {
-			o.retryAttempts.Add(1)
+			// retry-go also calls this after the final attempt, which is not
+			// followed by a retry.
+			if n+1 == attempts {
+				return
+			}
+			o.stats.retries++
 			o.logger.WithError(err).WithFields(logrus.Fields{
-				// Total attempt budget is retryAttempts+1 (initial + retries);
-				// report that so "attempt" never exceeds "maxAttempts".
 				"attempt":     n + 1,
-				"maxAttempts": retryAttempts + 1,
+				"maxAttempts": attempts,
 			}).Warn("Flush failed, retrying")
 		}),
-		retry.RetryIf(isRetryableError),
 	)
-
-	if err != nil {
-		o.flushFailures.Add(1)
-		o.logger.WithError(err).WithField("elapsed", time.Since(start)).Error("Flush failed after retries")
-
-		switch {
-		case isCommitError(err):
-			// Commit errors are ambiguous — data may already be persisted.
-			// Do NOT buffer these samples to avoid duplication on next flush.
-			o.logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error (data may already be persisted), not buffering samples")
-		case !o.config.BufferEnabled:
-			o.droppedSamples.Add(uint64(len(samples)))
-			o.logger.WithField("lostSamples", len(samples)).Error("Samples lost (buffering disabled)")
-		default:
-			var dropped int
-			o.pending, dropped = bound(samples, o.config.BufferMaxSamples, o.config.BufferDropPolicy)
-			if dropped > 0 {
-				o.droppedSamples.Add(uint64(dropped))
-				o.logger.WithFields(logrus.Fields{
-					"dropped":  dropped,
-					"buffered": len(o.pending),
-				}).Warn("Buffer overflow, dropped samples")
-			} else {
-				o.logger.WithFields(logrus.Fields{
-					"count":      len(o.pending),
-					"bufferSize": len(o.pending),
-				}).Info("Samples buffered for retry")
-			}
-		}
-	}
+	return ok, err
 }
 
 // bound trims samples to at most limit, dropping the oldest or the newest
@@ -444,28 +428,28 @@ func bound(samples []metrics.Sample, limit int, policy string) (kept []metrics.S
 	}
 }
 
-// doFlush performs the actual database insertion for a batch of samples.
-// This is the core flush logic, separated to enable retry wrapping.
+// insertRows inserts rows in a single transaction.
 //
 // Delivery semantics: at-least-once. If Commit() succeeds server-side but the
 // response is lost, the caller receives a commitError (which is NOT retried).
-// Samples are optimistically counted as processed before the commit error is returned,
-// because they may already be persisted.
-func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
-	start := time.Now()
+// Rows are optimistically counted as written before the commit error is
+// returned, because they may already be persisted.
+func (o *Output) insertRows(ctx context.Context, rows [][]any) error {
+	if o.db == nil {
+		return errNotStarted
+	}
 
-	// Begin transaction
-	batch, err := o.db.BeginTx(ctx, nil)
+	tx, err := o.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin batch: %w", err)
 	}
 	defer func() {
-		if rollbackErr := batch.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
 			o.logger.WithError(rollbackErr).Warn("Failed to rollback transaction")
 		}
 	}()
 
-	stmt, err := batch.PrepareContext(ctx, o.insertQuery)
+	stmt, err := tx.PrepareContext(ctx, o.insertQuery)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
@@ -475,73 +459,17 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
 		}
 	}()
 
-	count := 0
-	totalSamples := len(samples)
-
-	// Track conversion errors within this flush operation.
-	// Deferred so every return path flushes the counter.
-	var flushConvertErrors uint64
-	defer func() {
-		if flushConvertErrors > 0 {
-			o.convertErrors.Add(flushConvertErrors)
+	// Abort the whole batch on the first error; the deferred Rollback cleans up.
+	for _, row := range rows {
+		if _, err := stmt.ExecContext(ctx, row...); err != nil {
+			o.stats.insertErrors++
+			return fmt.Errorf("failed to insert sample: %w", err)
 		}
-	}()
-
-	for _, sample := range samples {
-		// Convert sample into a row for the schema
-		row, convErr := o.schema.Row(sample)
-		if convErr != nil {
-			flushConvertErrors++
-			o.logger.WithError(convErr).Warn("Failed to convert sample")
-			continue
-		}
-
-		// Execute insert — abort entire batch on first error.
-		// The deferred batch.Rollback() handles cleanup.
-		_, execErr := stmt.ExecContext(ctx, row...)
-		if execErr != nil {
-			o.insertErrors.Add(1)
-			return fmt.Errorf("failed to insert sample: %w", execErr)
-		}
-		count++
 	}
 
-	// If all samples had conversion errors, nothing to commit.
-	// Conversion errors are deterministic — retrying won't help.
-	if count == 0 {
-		if flushConvertErrors > 0 {
-			o.logger.WithFields(logrus.Fields{
-				"convertErrors": flushConvertErrors,
-				"totalSamples":  totalSamples,
-			}).Warn("All samples failed conversion, skipping commit")
-		}
-		return nil
-	}
-
-	if err := batch.Commit(); err != nil {
-		// Commit errors are ambiguous: data may already be persisted server-side.
-		// Optimistically count samples as processed and wrap as commitError
-		// so retry logic does NOT re-insert (avoiding duplication).
-		o.samplesProcessed.Add(uint64(count))
+	o.stats.written += uint64(len(rows))
+	if err := tx.Commit(); err != nil {
 		return &commitError{err: err}
 	}
-
-	o.samplesProcessed.Add(uint64(count))
-
-	// Log summary
-	if flushConvertErrors > 0 {
-		o.logger.WithFields(logrus.Fields{
-			"convertErrors":     flushConvertErrors,
-			"successfulInserts": count,
-			"totalSamples":      totalSamples,
-			"elapsed":           time.Since(start),
-		}).Warn("Flush completed with conversion errors")
-	} else {
-		o.logger.WithFields(logrus.Fields{
-			"samples": count,
-			"elapsed": time.Since(start),
-		}).Debug("Flushed metrics")
-	}
-
 	return nil
 }
