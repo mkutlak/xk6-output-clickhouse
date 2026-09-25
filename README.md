@@ -58,7 +58,7 @@ released tag (e.g. `@v0.6.0`) rather than `@latest` for reproducible builds.
 - [Configuration](./docs/configuration.md)
 - [Schema System](./docs/schemas.md)
 - [Examples & Usage](./docs/examples.md)
-- [Development & Contributing](./docs/development.md)
+- [Development & Contributing](./CONTRIBUTING.md)
 
 ## License
 
