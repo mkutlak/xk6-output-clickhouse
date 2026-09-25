@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,76 +12,161 @@ import (
 	"go.k6.io/k6/v2/output"
 )
 
-func TestIntegration_ClickHouse(t *testing.T) {
-	endpoint, cleanup := StartClickHouseContainer(t)
-	defer cleanup()
+// miniSchema is a minimal custom Schema registered by the "custom schema"
+// subtest below. It shows the whole extension surface a third party needs to
+// add a schema: three columns, no tag extraction.
+type miniSchema struct{}
 
-	dbName := "k6"
-	tableName := "samples"
+func (miniSchema) CreateTable(table string) string {
+	return fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			timestamp DateTime64(3),
+			metric    LowCardinality(String),
+			value     Float64
+		) ENGINE = MergeTree()
+		ORDER BY (metric, timestamp)
+	`, table)
+}
 
-	CreateDatabase(t, endpoint, dbName)
+func (miniSchema) InsertQuery(table string) string {
+	return fmt.Sprintf("INSERT INTO %s (timestamp, metric, value) VALUES (?, ?, ?)", table)
+}
 
-	params := output.Params{
-		Logger: newTestLogger(t),
-		JSONConfig: mustMarshalJSON(map[string]any{
-			"addr":         endpoint,
-			"user":         testUsername,
-			"password":     testPassword,
-			"database":     dbName,
-			"table":        tableName,
-			"pushInterval": "100ms",
-			"schemaMode":   "simple",
-		}),
-	}
+func (miniSchema) Row(s metrics.Sample) ([]any, error) {
+	return []any{s.Time, s.Metric.Name, s.Value}, nil
+}
 
-	out, err := New(params)
-	require.NoError(t, err)
+// TestIntegration runs the output end-to-end against a single shared
+// ClickHouse container, one subtest per schema.
+func TestIntegration(t *testing.T) {
+	endpoint := startClickHouseContainer(t)
 
-	// Start the output
-	err = out.Start()
-	require.NoError(t, err)
-	defer func() { require.NoError(t, out.Stop()) }()
+	t.Run("simple schema", func(t *testing.T) {
+		const dbName, tableName = "itest_simple", "samples"
 
-	// Create a sample
-	registry := metrics.NewRegistry()
-	metric := registry.MustNewMetric("test_metric", metrics.Trend)
+		arg := fmt.Sprintf("%s?database=%s&table=%s&user=%s&password=%s&pushInterval=50ms&schemaMode=simple",
+			endpoint, dbName, tableName, testUsername, testPassword)
+		out, err := New(output.Params{Logger: newTestLogger(t), ConfigArgument: arg})
+		require.NoError(t, err)
+		require.NoError(t, out.Start())
 
-	now := time.Now()
-	sample := metrics.Sample{
-		TimeSeries: metrics.TimeSeries{
-			Metric: metric,
-			Tags:   registry.RootTagSet().WithTagsFromMap(map[string]string{"tag1": "value1"}),
-		},
-		Time:  now,
-		Value: 123.45,
-	}
+		sample := newSample(t, "test_metric", metrics.Trend, 123.45, map[string]string{"tag1": "value1"})
+		out.AddMetricSamples([]metrics.SampleContainer{&mockSampleContainer{samples: []metrics.Sample{sample}}})
+		require.NoError(t, out.Stop())
 
-	out.AddMetricSamples([]metrics.SampleContainer{
-		&mockSampleContainer{
-			samples: []metrics.Sample{sample},
-		},
+		db := openVerifyDB(t, endpoint, dbName)
+
+		var metricName string
+		var value float64
+		var tags map[string]string
+		require.NoError(t, db.QueryRowContext(context.Background(),
+			fmt.Sprintf("SELECT metric, value, tags FROM %s", tableName),
+		).Scan(&metricName, &value, &tags))
+
+		assert.Equal(t, "test_metric", metricName)
+		assert.Equal(t, 123.45, value)
+		assert.Equal(t, "value1", tags["tag1"])
 	})
 
-	// Verify data in ClickHouse using polling instead of fixed sleep
-	ctx := context.Background()
-	verifyDB, err := sql.Open("clickhouse", fmt.Sprintf("clickhouse://%s:%s@%s/%s", testUsername, testPassword, endpoint, dbName))
+	t.Run("compatible schema", func(t *testing.T) {
+		const dbName, tableName = "itest_compat", "samples"
+
+		dsn := fmt.Sprintf("clickhouse://%s:%s@%s/%s?schemaMode=compatible&table=%s",
+			testUsername, testPassword, endpoint, dbName, tableName)
+		out, err := New(output.Params{Logger: newTestLogger(t), ConfigArgument: dsn})
+		require.NoError(t, err)
+		require.NoError(t, out.Start())
+
+		tagged := newSample(t, "compat_counter", metrics.Counter, 7, map[string]string{
+			"buildId":      "42",
+			"status":       "200",
+			"testid":       "run-1",
+			"method":       "GET",
+			"check":        "status is 200",
+			"custom_label": "kept",
+		})
+		bare := newSample(t, "compat_defaults", metrics.Trend, 1.5, nil)
+
+		out.AddMetricSamples([]metrics.SampleContainer{&mockSampleContainer{samples: []metrics.Sample{tagged, bare}}})
+		require.NoError(t, out.Stop())
+
+		db := openVerifyDB(t, endpoint, dbName)
+		ctx := context.Background()
+
+		t.Run("tagged sample maps to typed columns", func(t *testing.T) {
+			var (
+				metricType string
+				testID     string
+				status     uint16
+				method     string
+				checkName  string
+				extraTags  map[string]string
+			)
+			require.NoError(t, db.QueryRowContext(ctx, fmt.Sprintf(
+				"SELECT metric_type, testid, status, method, check_name, extra_tags FROM %s WHERE metric = 'compat_counter'",
+				tableName,
+			)).Scan(&metricType, &testID, &status, &method, &checkName, &extraTags))
+
+			assert.Equal(t, "counter", metricType)
+			assert.Equal(t, "run-1", testID)
+			assert.Equal(t, uint16(200), status)
+			assert.Equal(t, "GET", method)
+			assert.Equal(t, "status is 200", checkName)
+			assert.Equal(t, "kept", extraTags["custom_label"])
+		})
+
+		t.Run("bare sample uses Row defaults", func(t *testing.T) {
+			var testID string
+			var status uint16
+			require.NoError(t, db.QueryRowContext(ctx, fmt.Sprintf(
+				"SELECT testid, status FROM %s WHERE metric = 'compat_defaults'", tableName,
+			)).Scan(&testID, &status))
+
+			assert.Equal(t, "default", testID)
+			assert.Equal(t, uint16(0), status)
+		})
+	})
+
+	t.Run("custom schema", func(t *testing.T) {
+		RegisterSchema("itest_custom", miniSchema{})
+		const dbName, tableName = "itest_custom", "samples"
+
+		out, err := New(output.Params{
+			Logger: newTestLogger(t),
+			JSONConfig: mustMarshalJSON(map[string]any{
+				"addr":       endpoint,
+				"user":       testUsername,
+				"password":   testPassword,
+				"database":   dbName,
+				"table":      tableName,
+				"schemaMode": "itest_custom",
+			}),
+		})
+		require.NoError(t, err)
+		require.NoError(t, out.Start())
+
+		sample := newSample(t, "custom_metric", metrics.Gauge, 9.5, nil)
+		out.AddMetricSamples([]metrics.SampleContainer{&mockSampleContainer{samples: []metrics.Sample{sample}}})
+		require.NoError(t, out.Stop())
+
+		db := openVerifyDB(t, endpoint, dbName)
+
+		var metricName string
+		var value float64
+		require.NoError(t, db.QueryRowContext(context.Background(),
+			fmt.Sprintf("SELECT metric, value FROM %s", tableName),
+		).Scan(&metricName, &value))
+
+		assert.Equal(t, "custom_metric", metricName)
+		assert.Equal(t, 9.5, value)
+	})
+}
+
+// openVerifyDB opens a connection to dbName on endpoint for assertions.
+func openVerifyDB(t *testing.T, endpoint, dbName string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("clickhouse", fmt.Sprintf("clickhouse://%s:%s@%s/%s", testUsername, testPassword, endpoint, dbName))
 	require.NoError(t, err)
-	defer func() { require.NoError(t, verifyDB.Close()) }()
-
-	require.Eventually(t, func() bool {
-		var count int
-		err := verifyDB.QueryRowContext(ctx, fmt.Sprintf("SELECT count() FROM %s", tableName)).Scan(&count)
-		return err == nil && count == 1
-	}, 5*time.Second, 100*time.Millisecond, "row should appear within timeout")
-
-	var metricName string
-	var metricValue float64
-	var tags map[string]string
-
-	err = verifyDB.QueryRowContext(ctx, fmt.Sprintf("SELECT metric, value, tags FROM %s", tableName)).Scan(&metricName, &metricValue, &tags)
-	require.NoError(t, err)
-
-	assert.Equal(t, "test_metric", metricName)
-	assert.Equal(t, 123.45, metricValue)
-	assert.Equal(t, "value1", tags["tag1"])
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	return db
 }
