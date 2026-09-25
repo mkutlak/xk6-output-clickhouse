@@ -104,14 +104,17 @@ and table must already exist with the exact columns of the selected schema
 
 ## Delivery and buffering
 
-Delivery is at-least-once, not exactly-once:
+Delivery is at-most-once, not exactly-once: rows only reach ClickHouse on
+`Commit`, so the extension never resends a batch the server may already have,
+and never writes the same sample twice. Failures can still lose samples:
 
 - Retryable failures (connection refused/reset, timeouts, EOF, network
-  errors) get exponential backoff up to `retryAttempts`. One failed row
-  aborts the whole batch, retried as a unit.
-- Commit errors are ambiguous (data may already be persisted), so they're
-  never retried or re-buffered; de-duplicate at query time (e.g.
-  `ReplacingMergeTree`) if exact counts matter.
+  errors) occur before `Commit` ships anything, so retrying is safe. They
+  get exponential backoff up to `retryAttempts`; one failed row aborts the
+  whole batch, retried as a unit.
+- Commit errors are ambiguous (the batch may already be persisted
+  server-side), so they're never retried or re-buffered — the batch is
+  dropped rather than risk a duplicate.
 - Conversion errors drop only the bad sample; the rest of the batch commits.
 - If retries are exhausted and `bufferEnabled=true` (default), the batch is
   kept in memory (`bufferMaxSamples` cap, `bufferDropPolicy` on overflow) and
