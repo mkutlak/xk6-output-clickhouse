@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,8 +61,9 @@ type Output struct {
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 
-	// Resilience: in-memory buffer for samples during connection failures
-	failoverBuffer *SampleBuffer
+	// pending holds failed samples waiting for the next flush; only touched by
+	// flush() and by Stop() after flushes finished.
+	pending []metrics.Sample
 
 	// Error metrics (atomic for lock-free concurrent access)
 	convertErrors    atomic.Uint64 // Cumulative count of sample conversion failures
@@ -71,7 +73,7 @@ type Output struct {
 	// Resilience metrics (atomic for lock-free concurrent access)
 	retryAttempts  atomic.Uint64 // Total retry attempts across all flushes
 	flushFailures  atomic.Uint64 // Flushes that failed after all retries
-	droppedSamples atomic.Uint64 // Samples dropped due to buffer overflow
+	droppedSamples atomic.Uint64 // Samples dropped: overflow, buffering disabled, or lost at shutdown
 }
 
 // ErrorMetrics contains cumulative error statistics from flush operations.
@@ -96,12 +98,8 @@ type ErrorMetrics struct {
 	// These failures result in samples being buffered (if enabled) or lost.
 	FlushFailures uint64
 
-	// BufferedSamples is the current number of samples in the failover buffer.
-	// Only populated when BufferEnabled is true.
-	BufferedSamples uint64
-
-	// DroppedSamples is the total number of samples dropped due to buffer overflow.
-	// Only relevant when BufferEnabled is true.
+	// DroppedSamples is the total number of samples dropped: buffer overflow,
+	// buffering disabled, or undrainable at shutdown.
 	DroppedSamples uint64
 }
 
@@ -203,18 +201,6 @@ func (o *Output) Start() error {
 	// Pre-compute INSERT query from schema implementation
 	o.insertQuery = schema.InsertQuery(table)
 
-	// Initialize failover buffer if enabled
-	if o.config.BufferEnabled {
-		o.failoverBuffer = NewSampleBuffer(
-			o.config.BufferMaxSamples,
-			DropPolicy(o.config.BufferDropPolicy),
-		)
-		o.logger.WithFields(logrus.Fields{
-			"capacity":   o.config.BufferMaxSamples,
-			"dropPolicy": o.config.BufferDropPolicy,
-		}).Debug("Failover buffer initialized")
-	}
-
 	// Start periodic flusher
 	pf, err := output.NewPeriodicFlusher(o.config.PushInterval, o.flush)
 	if err != nil {
@@ -298,45 +284,44 @@ func (o *Output) Stop() error {
 	o.flushWG.Wait()
 	o.logger.Debug("All flushes completed")
 
-	// Final attempt to drain failover buffer before shutdown
-	if o.failoverBuffer != nil && o.failoverBuffer.Len() > 0 {
-		bufferedCount := o.failoverBuffer.Len()
-		o.logger.WithField("bufferedSamples", bufferedCount).Info("Draining failover buffer on shutdown")
+	// Final attempt to drain pending samples before shutdown
+	if len(o.pending) > 0 {
+		samples := o.pending
+		o.logger.WithField("bufferedSamples", len(samples)).Info("Draining pending samples on shutdown")
 
 		// Use a fresh context for final drain (don't use cancelled shutdown context)
 		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer drainCancel()
 
-		samples := o.failoverBuffer.PopAll()
-		if len(samples) > 0 {
-			// Retry the final drain with the same backoff policy as a normal flush.
-			// The outage that filled the buffer may still be flapping, so a single
-			// unretried attempt would needlessly lose data inside the 30s window.
-			// config is immutable after New(); no flushes are in flight here (we
-			// already waited on flushWG), so reading it without the lock is safe.
-			err := retry.Do(
-				func() error { return o.doFlush(drainCtx, samples) },
-				retry.Attempts(o.config.RetryAttempts+1),
-				retry.Delay(o.config.RetryDelay),
-				retry.MaxDelay(o.config.RetryMaxDelay),
-				retry.DelayType(retry.BackOffDelay),
-				retry.Context(drainCtx),
-				retry.RetryIf(isRetryableError),
-			)
-			switch {
-			case err == nil:
-				o.logger.WithField("flushedSamples", len(samples)).Info("Successfully drained failover buffer")
-			case isCommitError(err):
-				// Commit errors are ambiguous — the server may already hold the data.
-				// Don't count them as dropped (mirrors flush()).
-				o.logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error during shutdown drain (data may already be persisted)")
-			default:
-				// Unrecoverable at shutdown; count the loss so the final metrics
-				// summary is accurate instead of silently under-reporting drops.
-				o.droppedSamples.Add(uint64(len(samples)))
-				o.logger.WithError(err).WithField("lostSamples", len(samples)).Warn("Failed to drain buffer on shutdown, data lost")
-			}
+		// Retry the final drain with the same backoff policy as a normal flush.
+		// The outage that filled the buffer may still be flapping, so a single
+		// unretried attempt would needlessly lose data inside the 30s window.
+		// config is immutable after New(); no flushes are in flight here (we
+		// already waited on flushWG), so reading it without the lock is safe.
+		err := retry.Do(
+			func() error { return o.doFlush(drainCtx, samples) },
+			retry.Attempts(o.config.RetryAttempts+1),
+			retry.Delay(o.config.RetryDelay),
+			retry.MaxDelay(o.config.RetryMaxDelay),
+			retry.DelayType(retry.BackOffDelay),
+			retry.Context(drainCtx),
+			retry.RetryIf(isRetryableError),
+		)
+		switch {
+		case err == nil:
+			o.logger.WithField("flushedSamples", len(samples)).Info("Successfully drained pending samples")
+		case isCommitError(err):
+			// Commit errors are ambiguous — the server may already hold the data.
+			// Don't count them as dropped (mirrors flush()).
+			o.logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error during shutdown drain (data may already be persisted)")
+		default:
+			// Unrecoverable at shutdown; count the loss so the final metrics
+			// summary is accurate instead of silently under-reporting drops.
+			o.droppedSamples.Add(uint64(len(samples)))
+			o.logger.WithError(err).WithField("lostSamples", len(samples)).Warn("Failed to drain buffer on shutdown, data lost")
 		}
+
+		o.pending = nil
 	}
 
 	// Cancel shutdown context after final drain
@@ -369,20 +354,12 @@ func (o *Output) Stop() error {
 // GetErrorMetrics returns cumulative error statistics from flush operations.
 // All counters are thread-safe and can be called concurrently with flush operations.
 func (o *Output) GetErrorMetrics() ErrorMetrics {
-	var bufferedSamples uint64
-	if o.failoverBuffer != nil {
-		if n := o.failoverBuffer.Len(); n > 0 {
-			bufferedSamples = uint64(n)
-		}
-	}
-
 	return ErrorMetrics{
 		ConvertErrors:    o.convertErrors.Load(),
 		InsertErrors:     o.insertErrors.Load(),
 		SamplesProcessed: o.samplesProcessed.Load(),
 		RetryAttempts:    o.retryAttempts.Load(),
 		FlushFailures:    o.flushFailures.Load(),
-		BufferedSamples:  bufferedSamples,
 		DroppedSamples:   o.droppedSamples.Load(),
 	}
 }
@@ -471,16 +448,12 @@ func (o *Output) flush() {
 		}
 	}
 
-	// Collect samples from both k6 buffer and failover buffer
-	samples := o.GetBufferedSamples()
-
-	// Also get any previously failed samples from failover buffer
-	if o.failoverBuffer != nil {
-		bufferedSamples := o.failoverBuffer.PopAll()
-		if len(bufferedSamples) > 0 {
-			logger.WithField("count", len(bufferedSamples)).Debug("Recovered samples from failover buffer")
-			samples = append(bufferedSamples, samples...)
-		}
+	// Previously failed samples go first, followed by new samples flattened
+	// from k6's per-container buffer.
+	samples := o.pending
+	o.pending = nil
+	for _, c := range o.GetBufferedSamples() {
+		samples = append(samples, c.GetSamples()...)
 	}
 
 	if len(samples) == 0 {
@@ -515,31 +488,45 @@ func (o *Output) flush() {
 		o.flushFailures.Add(1)
 		logger.WithError(err).WithField("elapsed", time.Since(start)).Error("Flush failed after retries")
 
-		// Commit errors are ambiguous — data may already be persisted.
-		// Do NOT buffer these samples to avoid duplication on next flush.
-		if isCommitError(err) {
+		switch {
+		case isCommitError(err):
+			// Commit errors are ambiguous — data may already be persisted.
+			// Do NOT buffer these samples to avoid duplication on next flush.
 			logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error (data may already be persisted), not buffering samples")
-			return
-		}
-
-		// Buffer failed samples for later retry
-		if bufferEnabled && o.failoverBuffer != nil {
-			dropped := o.failoverBuffer.Push(samples)
+		case !bufferEnabled:
+			o.droppedSamples.Add(uint64(len(samples)))
+			logger.WithField("lostSamples", len(samples)).Error("Samples lost (buffering disabled)")
+		default:
+			var dropped int
+			o.pending, dropped = bound(samples, o.config.BufferMaxSamples, o.config.BufferDropPolicy)
 			if dropped > 0 {
 				o.droppedSamples.Add(uint64(dropped))
 				logger.WithFields(logrus.Fields{
 					"dropped":  dropped,
-					"buffered": o.failoverBuffer.Len(),
+					"buffered": len(o.pending),
 				}).Warn("Buffer overflow, dropped samples")
 			} else {
 				logger.WithFields(logrus.Fields{
-					"count":      len(samples),
-					"bufferSize": o.failoverBuffer.Len(),
+					"count":      len(o.pending),
+					"bufferSize": len(o.pending),
 				}).Info("Samples buffered for retry")
 			}
-		} else {
-			logger.WithField("lostSamples", len(samples)).Error("Samples lost (buffering disabled)")
 		}
+	}
+}
+
+// bound trims samples to at most limit, dropping the oldest or the newest
+// according to policy, and reports how many were dropped.
+func bound(samples []metrics.Sample, limit int, policy string) (kept []metrics.Sample, dropped int) {
+	n := len(samples) - limit
+	switch {
+	case n <= 0:
+		return samples, 0
+	case policy == dropNewest:
+		clear(samples[limit:])
+		return samples[:limit], n
+	default:
+		return slices.Delete(samples, 0, n), n
 	}
 }
 
@@ -552,7 +539,7 @@ func (o *Output) flush() {
 // because they may already be persisted.
 //
 //nolint:gocyclo // complexity is acceptable for batch processing
-func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer) error {
+func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
 	o.mu.RLock()
 	db := o.db
 	insertQuery := o.insertQuery
@@ -588,7 +575,7 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 	}()
 
 	count := 0
-	totalSamples := 0
+	totalSamples := len(samples)
 
 	// Track conversion errors within this flush operation.
 	// Deferred so every return path (including context cancellation) flushes the counter.
@@ -599,39 +586,32 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 		}
 	}()
 
-	// Calculate total samples for progress tracking
-	for _, container := range samples {
-		totalSamples += len(container.GetSamples())
-	}
-
-	for _, container := range samples {
-		for _, sample := range container.GetSamples() {
-			// Check for context cancellation every 1000 samples
-			if ctx != nil && count%1000 == 0 {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
+	for _, sample := range samples {
+		// Check for context cancellation every 1000 samples
+		if ctx != nil && count%1000 == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
-
-			// Convert sample into a row for the schema
-			row, convErr := schema.Row(sample)
-			if convErr != nil {
-				flushConvertErrors++
-				logger.WithError(convErr).Warn("Failed to convert sample")
-				continue
-			}
-
-			// Execute insert — abort entire batch on first error.
-			// The deferred batch.Rollback() handles cleanup.
-			_, execErr := stmt.ExecContext(ctx, row...)
-			if execErr != nil {
-				o.insertErrors.Add(1)
-				return fmt.Errorf("failed to insert sample: %w", execErr)
-			}
-			count++
 		}
+
+		// Convert sample into a row for the schema
+		row, convErr := schema.Row(sample)
+		if convErr != nil {
+			flushConvertErrors++
+			logger.WithError(convErr).Warn("Failed to convert sample")
+			continue
+		}
+
+		// Execute insert — abort entire batch on first error.
+		// The deferred batch.Rollback() handles cleanup.
+		_, execErr := stmt.ExecContext(ctx, row...)
+		if execErr != nil {
+			o.insertErrors.Add(1)
+			return fmt.Errorf("failed to insert sample: %w", execErr)
+		}
+		count++
 	}
 
 	// If all samples had conversion errors, nothing to commit.

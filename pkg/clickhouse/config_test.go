@@ -346,7 +346,7 @@ func TestParseConfig_ZeroValueOverrides(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint(3), cfg.RetryAttempts, "unset retryAttempts should keep default")
-		assert.Equal(t, 10000, cfg.BufferMaxSamples, "unset bufferMaxSamples should keep default")
+		assert.Equal(t, 100000, cfg.BufferMaxSamples, "unset bufferMaxSamples should keep default")
 		assert.False(t, cfg.SkipSchemaCreation, "unset skipSchemaCreation should keep default")
 	})
 
