@@ -456,10 +456,10 @@ func bound(samples []metrics.Sample, limit int, policy string) (kept []metrics.S
 
 // insertRows inserts rows in a single transaction.
 //
-// Delivery semantics: at-least-once. If Commit() succeeds server-side but the
-// response is lost, the caller receives a commitError (which is NOT retried).
-// Rows are optimistically counted as written before the commit error is
-// returned, because they may already be persisted.
+// Delivery semantics: at-most-once. Rows are shipped to ClickHouse only by
+// Commit(); a failure there is ambiguous (the batch may already be
+// persisted), so commitError is never retried or re-buffered. The batch is
+// therefore never duplicated, but an ambiguous commit can lose it.
 func (o *clickhouseOutput) insertRows(ctx context.Context, rows [][]any) error {
 	if o.db == nil {
 		return errNotStarted
