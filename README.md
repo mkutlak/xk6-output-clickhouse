@@ -20,7 +20,7 @@ A [k6](https://k6.io) extension for outputting load test metrics to [ClickHouse]
 
 ```bash
 # Build with the pinned xk6 version this extension is tested against (see .xk6-version).
-go install go.k6.io/xk6/cmd/xk6@v1.4.6
+go install go.k6.io/xk6/cmd/xk6@v1.4.14
 xk6 build --with github.com/mkutlak/xk6-output-clickhouse@latest
 ```
 
@@ -43,7 +43,7 @@ docker run -d --name clickhouse -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-
 | --- | --- |
 | **k6** | **v2.x** — this extension is built on `go.k6.io/k6/v2`. It is **not** compatible with k6 v1.x. |
 | **Go** | 1.26+ |
-| **xk6** | v1.4.6 (pinned in `.xk6-version`) |
+| **xk6** | v1.4.14 (pinned in `.xk6-version`) |
 | **ClickHouse** | native protocol (clickhouse-go/v2); tested against 26.x |
 
 This project is pre-1.0: minor releases may include breaking changes. Pin a
