@@ -51,18 +51,11 @@ type Output struct {
 	// Schema selected by the schemaMode config
 	schema Schema
 
-	// Concurrency control
-	mu      sync.RWMutex
-	closed  bool
-	flushWG sync.WaitGroup // Track in-flight flushes
-	flushMu sync.Mutex     // Prevents overlapping flush cycles during outages
+	stopOnce sync.Once
 
-	// Context cancellation for graceful shutdown
-	shutdownCtx    context.Context
-	shutdownCancel context.CancelFunc
-
-	// pending holds failed samples waiting for the next flush; only touched by
-	// flush() and by Stop() after flushes finished.
+	// pending holds samples from failed flushes, retried first on the next
+	// flush. Only touched by the flusher goroutine and by Stop after the flusher
+	// stopped.
 	pending []metrics.Sample
 
 	// Error metrics (atomic for lock-free concurrent access)
@@ -131,21 +124,9 @@ func (o *Output) Description() string {
 	return fmt.Sprintf("clickhouse (%s)", o.config.Addr)
 }
 
-// Start initializes the connection and starts the flusher
-func (o *Output) Start() error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	if o.closed {
-		return fmt.Errorf("output already closed")
-	}
-
-	// Create cancellable context for graceful shutdown
-	o.shutdownCtx, o.shutdownCancel = context.WithCancel(context.Background()) // #nosec G118 -- shutdownCancel is called in Stop()
-
-	o.logger.Debug("Starting ClickHouse output")
-
-	// Build TLS configuration
+// Start connects to ClickHouse, creates the schema unless skipped, and starts
+// the periodic flusher.
+func (o *Output) Start() (err error) {
 	tlsConfig, err := o.config.TLS.BuildTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to build TLS config: %w", err)
@@ -164,44 +145,41 @@ func (o *Output) Start() error {
 		},
 		TLS: tlsConfig,
 	})
+	defer func() {
+		if err != nil {
+			_ = db.Close()
+			o.db = nil
+		}
+	}()
 
-	// Test connection
-	if err := db.PingContext(o.shutdownCtx); err != nil {
+	ctx := context.Background()
+	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("failed to connect to clickhouse at %s: %w "+
 			"(verify the address and the native port — 9000 by default, not the 8123 HTTP port — and the credentials)",
 			o.config.Addr, err)
 	}
 
-	o.db = db
-	o.logger.Debug("Connected to ClickHouse")
-
-	// Get schema implementation from registry
 	schema, err := getSchema(o.config.SchemaMode)
 	if err != nil {
 		return fmt.Errorf("failed to get schema implementation: %w", err)
 	}
-	o.schema = schema
-	o.logger.WithField("schemaMode", o.config.SchemaMode).Debug("Using schema implementation")
 
 	table := escapeIdentifier(o.config.Database) + "." + escapeIdentifier(o.config.Table)
 
-	// Create database and table if not skipped
 	if !o.config.SkipSchemaCreation {
-		if _, err := db.ExecContext(o.shutdownCtx, "CREATE DATABASE IF NOT EXISTS "+escapeIdentifier(o.config.Database)); err != nil {
+		if _, err := db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+escapeIdentifier(o.config.Database)); err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
 		}
-		if _, err := db.ExecContext(o.shutdownCtx, schema.CreateTable(table)); err != nil {
+		if _, err := db.ExecContext(ctx, schema.CreateTable(table)); err != nil {
 			return fmt.Errorf("failed to create table: %w", err)
 		}
-		o.logger.Debug("Schema created")
-	} else {
-		o.logger.Debug("Schema creation skipped")
 	}
 
-	// Pre-compute INSERT query from schema implementation
+	// Everything flush reads must be set before the flusher goroutine starts.
+	o.db = db
+	o.schema = schema
 	o.insertQuery = schema.InsertQuery(table)
 
-	// Start periodic flusher
 	pf, err := output.NewPeriodicFlusher(o.config.PushInterval, o.flush)
 	if err != nil {
 		return err
@@ -209,10 +187,14 @@ func (o *Output) Start() error {
 	o.periodicFlusher = pf
 
 	o.logger.WithFields(logrus.Fields{
-		"interval":      o.config.PushInterval,
-		"retryAttempts": o.config.RetryAttempts,
-		"retryDelay":    o.config.RetryDelay,
-		"bufferEnabled": o.config.BufferEnabled,
+		"addr":             o.config.Addr,
+		"database":         o.config.Database,
+		"table":            o.config.Table,
+		"schemaMode":       o.config.SchemaMode,
+		"pushInterval":     o.config.PushInterval,
+		"retryAttempts":    o.config.RetryAttempts,
+		"bufferEnabled":    o.config.BufferEnabled,
+		"bufferMaxSamples": o.config.BufferMaxSamples,
 	}).Debug("Started")
 	return nil
 }
@@ -249,64 +231,47 @@ func (o *Output) logTLSStatus() {
 	o.logger.Debug("TLS enabled with certificate verification")
 }
 
-// Stop flushes remaining metrics and closes the connection
+// drainTimeout bounds the final attempt to write pending samples on Stop.
+const drainTimeout = 30 * time.Second
+
+// Stop flushes remaining metrics and closes the connection. Only the first
+// call has an effect.
 func (o *Output) Stop() error {
-	// Check if already stopped (read-only check to avoid blocking)
-	o.mu.RLock()
-	alreadyClosed := o.closed
-	pf := o.periodicFlusher
-	o.mu.RUnlock()
+	o.stopOnce.Do(o.stop)
+	return nil
+}
 
-	if alreadyClosed {
-		return nil
-	}
-
+func (o *Output) stop() {
 	o.logger.Debug("Stopping")
 
-	// Stop the periodic flusher FIRST — this triggers one final flush callback.
-	// Since o.closed is still false, the final flush() executes normally.
-	if pf != nil {
-		pf.Stop()
+	// Runs one final flush on the flusher goroutine and waits for it.
+	if o.periodicFlusher != nil {
+		o.periodicFlusher.Stop()
 	}
-
-	// Now mark as closed to prevent any new flushes from starting.
-	o.mu.Lock()
-	if o.closed {
-		// Another goroutine completed Stop() concurrently
-		o.mu.Unlock()
-		return nil
-	}
-	o.closed = true
-	o.mu.Unlock()
-
-	// Wait for all in-flight flushes to complete (including the final one)
-	o.logger.Debug("Waiting for in-flight flushes to complete")
-	o.flushWG.Wait()
-	o.logger.Debug("All flushes completed")
 
 	// Final attempt to drain pending samples before shutdown
 	if len(o.pending) > 0 {
 		samples := o.pending
+		o.pending = nil
 		o.logger.WithField("bufferedSamples", len(samples)).Info("Draining pending samples on shutdown")
-
-		// Use a fresh context for final drain (don't use cancelled shutdown context)
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer drainCancel()
 
 		// Retry the final drain with the same backoff policy as a normal flush.
 		// The outage that filled the buffer may still be flapping, so a single
-		// unretried attempt would needlessly lose data inside the 30s window.
-		// config is immutable after New(); no flushes are in flight here (we
-		// already waited on flushWG), so reading it without the lock is safe.
-		err := retry.Do(
-			func() error { return o.doFlush(drainCtx, samples) },
-			retry.Attempts(o.config.RetryAttempts+1),
-			retry.Delay(o.config.RetryDelay),
-			retry.MaxDelay(o.config.RetryMaxDelay),
-			retry.DelayType(retry.BackOffDelay),
-			retry.Context(drainCtx),
-			retry.RetryIf(isRetryableError),
-		)
+		// unretried attempt would needlessly lose data inside the drain window.
+		err := errors.New("output was not started")
+		if o.db != nil {
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), drainTimeout)
+			err = retry.Do(
+				func() error { return o.doFlush(drainCtx, samples) },
+				retry.Attempts(o.config.RetryAttempts+1),
+				retry.Delay(o.config.RetryDelay),
+				retry.MaxDelay(o.config.RetryMaxDelay),
+				retry.DelayType(retry.BackOffDelay),
+				retry.Context(drainCtx),
+				retry.RetryIf(isRetryableError),
+			)
+			drainCancel()
+		}
 		switch {
 		case err == nil:
 			o.logger.WithField("flushedSamples", len(samples)).Info("Successfully drained pending samples")
@@ -320,18 +285,7 @@ func (o *Output) Stop() error {
 			o.droppedSamples.Add(uint64(len(samples)))
 			o.logger.WithError(err).WithField("lostSamples", len(samples)).Warn("Failed to drain buffer on shutdown, data lost")
 		}
-
-		o.pending = nil
 	}
-
-	// Cancel shutdown context after final drain
-	if o.shutdownCancel != nil {
-		o.shutdownCancel()
-	}
-
-	// Now safe to close database
-	o.mu.Lock()
-	defer o.mu.Unlock()
 
 	if o.db != nil {
 		_ = o.db.Close()
@@ -347,8 +301,6 @@ func (o *Output) Stop() error {
 		"flushFailures":    errStats.FlushFailures,
 		"droppedSamples":   errStats.DroppedSamples,
 	}).Info("ClickHouse output stopped")
-
-	return nil
 }
 
 // GetErrorMetrics returns cumulative error statistics from flush operations.
@@ -407,47 +359,9 @@ func isRetryableError(err error) bool {
 	return false
 }
 
-// flush writes buffered samples to ClickHouse with retry logic
+// flush writes buffered samples to ClickHouse with retry logic. It runs only on
+// the periodic flusher goroutine, one call at a time.
 func (o *Output) flush() {
-	// Prevent overlapping flushes — if a previous flush is still running
-	// (e.g., retrying during an outage), skip this cycle to avoid amplifying
-	// load on an already-struggling ClickHouse.
-	if !o.flushMu.TryLock() {
-		return
-	}
-	defer o.flushMu.Unlock()
-
-	// Quick early exit check (before acquiring WaitGroup)
-	o.mu.RLock()
-	if o.closed {
-		o.mu.RUnlock()
-		return
-	}
-
-	// Register active flush while still under lock (prevents race with Stop())
-	o.flushWG.Add(1)
-
-	// Capture state under lock
-	ctx := o.shutdownCtx
-	logger := o.logger
-	retryAttempts := o.config.RetryAttempts
-	retryDelay := o.config.RetryDelay
-	retryMaxDelay := o.config.RetryMaxDelay
-	bufferEnabled := o.config.BufferEnabled
-	o.mu.RUnlock()
-
-	defer o.flushWG.Done()
-
-	// Check if context was cancelled during shutdown
-	if ctx != nil {
-		select {
-		case <-ctx.Done():
-			logger.Debug("Flush cancelled by shutdown context")
-			return
-		default:
-		}
-	}
-
 	// Previously failed samples go first, followed by new samples flattened
 	// from k6's per-container buffer.
 	samples := o.pending
@@ -461,20 +375,20 @@ func (o *Output) flush() {
 	}
 
 	start := time.Now()
+	retryAttempts := o.config.RetryAttempts
 
 	// Wrap flush in retry logic
 	err := retry.Do(
 		func() error {
-			return o.doFlush(ctx, samples)
+			return o.doFlush(context.Background(), samples)
 		},
 		retry.Attempts(retryAttempts+1), // +1 because Attempts includes the initial attempt
-		retry.Delay(retryDelay),
-		retry.MaxDelay(retryMaxDelay),
+		retry.Delay(o.config.RetryDelay),
+		retry.MaxDelay(o.config.RetryMaxDelay),
 		retry.DelayType(retry.BackOffDelay),
-		retry.Context(ctx),
 		retry.OnRetry(func(n uint, err error) {
 			o.retryAttempts.Add(1)
-			logger.WithError(err).WithFields(logrus.Fields{
+			o.logger.WithError(err).WithFields(logrus.Fields{
 				// Total attempt budget is retryAttempts+1 (initial + retries);
 				// report that so "attempt" never exceeds "maxAttempts".
 				"attempt":     n + 1,
@@ -486,27 +400,27 @@ func (o *Output) flush() {
 
 	if err != nil {
 		o.flushFailures.Add(1)
-		logger.WithError(err).WithField("elapsed", time.Since(start)).Error("Flush failed after retries")
+		o.logger.WithError(err).WithField("elapsed", time.Since(start)).Error("Flush failed after retries")
 
 		switch {
 		case isCommitError(err):
 			// Commit errors are ambiguous — data may already be persisted.
 			// Do NOT buffer these samples to avoid duplication on next flush.
-			logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error (data may already be persisted), not buffering samples")
-		case !bufferEnabled:
+			o.logger.WithError(err).WithField("samples", len(samples)).Warn("Commit error (data may already be persisted), not buffering samples")
+		case !o.config.BufferEnabled:
 			o.droppedSamples.Add(uint64(len(samples)))
-			logger.WithField("lostSamples", len(samples)).Error("Samples lost (buffering disabled)")
+			o.logger.WithField("lostSamples", len(samples)).Error("Samples lost (buffering disabled)")
 		default:
 			var dropped int
 			o.pending, dropped = bound(samples, o.config.BufferMaxSamples, o.config.BufferDropPolicy)
 			if dropped > 0 {
 				o.droppedSamples.Add(uint64(dropped))
-				logger.WithFields(logrus.Fields{
+				o.logger.WithFields(logrus.Fields{
 					"dropped":  dropped,
 					"buffered": len(o.pending),
 				}).Warn("Buffer overflow, dropped samples")
 			} else {
-				logger.WithFields(logrus.Fields{
+				o.logger.WithFields(logrus.Fields{
 					"count":      len(o.pending),
 					"bufferSize": len(o.pending),
 				}).Info("Samples buffered for retry")
@@ -537,40 +451,27 @@ func bound(samples []metrics.Sample, limit int, policy string) (kept []metrics.S
 // response is lost, the caller receives a commitError (which is NOT retried).
 // Samples are optimistically counted as processed before the commit error is returned,
 // because they may already be persisted.
-//
-//nolint:gocyclo // complexity is acceptable for batch processing
 func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
-	o.mu.RLock()
-	db := o.db
-	insertQuery := o.insertQuery
-	schema := o.schema
-	logger := o.logger
-	o.mu.RUnlock()
-
-	if db == nil {
-		return errors.New("database connection not initialized")
-	}
-
 	start := time.Now()
 
 	// Begin transaction
-	batch, err := db.BeginTx(ctx, nil)
+	batch, err := o.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin batch: %w", err)
 	}
 	defer func() {
 		if rollbackErr := batch.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
-			logger.WithError(rollbackErr).Warn("Failed to rollback transaction")
+			o.logger.WithError(rollbackErr).Warn("Failed to rollback transaction")
 		}
 	}()
 
-	stmt, err := batch.PrepareContext(ctx, insertQuery)
+	stmt, err := batch.PrepareContext(ctx, o.insertQuery)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	defer func() {
 		if closeErr := stmt.Close(); closeErr != nil {
-			logger.WithError(closeErr).Warn("Failed to close statement")
+			o.logger.WithError(closeErr).Warn("Failed to close statement")
 		}
 	}()
 
@@ -578,7 +479,7 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
 	totalSamples := len(samples)
 
 	// Track conversion errors within this flush operation.
-	// Deferred so every return path (including context cancellation) flushes the counter.
+	// Deferred so every return path flushes the counter.
 	var flushConvertErrors uint64
 	defer func() {
 		if flushConvertErrors > 0 {
@@ -587,20 +488,11 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
 	}()
 
 	for _, sample := range samples {
-		// Check for context cancellation every 1000 samples
-		if ctx != nil && count%1000 == 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-		}
-
 		// Convert sample into a row for the schema
-		row, convErr := schema.Row(sample)
+		row, convErr := o.schema.Row(sample)
 		if convErr != nil {
 			flushConvertErrors++
-			logger.WithError(convErr).Warn("Failed to convert sample")
+			o.logger.WithError(convErr).Warn("Failed to convert sample")
 			continue
 		}
 
@@ -618,7 +510,7 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
 	// Conversion errors are deterministic — retrying won't help.
 	if count == 0 {
 		if flushConvertErrors > 0 {
-			logger.WithFields(logrus.Fields{
+			o.logger.WithFields(logrus.Fields{
 				"convertErrors": flushConvertErrors,
 				"totalSamples":  totalSamples,
 			}).Warn("All samples failed conversion, skipping commit")
@@ -638,14 +530,14 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.Sample) error {
 
 	// Log summary
 	if flushConvertErrors > 0 {
-		logger.WithFields(logrus.Fields{
+		o.logger.WithFields(logrus.Fields{
 			"convertErrors":     flushConvertErrors,
 			"successfulInserts": count,
 			"totalSamples":      totalSamples,
 			"elapsed":           time.Since(start),
 		}).Warn("Flush completed with conversion errors")
 	} else {
-		logger.WithFields(logrus.Fields{
+		o.logger.WithFields(logrus.Fields{
 			"samples": count,
 			"elapsed": time.Since(start),
 		}).Debug("Flushed metrics")

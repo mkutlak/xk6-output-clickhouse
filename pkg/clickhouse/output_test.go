@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"testing"
 	"time"
 
@@ -254,25 +253,6 @@ func TestOutput_Flush(t *testing.T) {
 			clickhouseOut.flush()
 		})
 	})
-
-	t.Run("flush with closed output", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{Logger: newTestLogger(t)}
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
-
-		// Close output
-		err = clickhouseOut.Stop()
-		require.NoError(t, err)
-
-		// Flush should return early
-		require.NotPanics(t, func() {
-			clickhouseOut.flush()
-		})
-	})
 }
 
 func TestOutput_Lifecycle(t *testing.T) {
@@ -434,79 +414,6 @@ func BenchmarkOutput_New(b *testing.B) {
 	}
 }
 
-// Test for Issue #2: Verify Stop allows final flush to execute
-func TestStop_FinalFlushNotSkipped(t *testing.T) {
-	t.Parallel()
-
-	t.Run("flush is not blocked during stop sequence", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{Logger: newTestLogger(t)}
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
-
-		// Verify closed is false before Stop
-		clickhouseOut.mu.RLock()
-		assert.False(t, clickhouseOut.closed, "closed should be false before Stop")
-		clickhouseOut.mu.RUnlock()
-
-		// flush() should not skip when closed is false
-		// (simulates the final flush triggered by periodicFlusher.Stop)
-		require.NotPanics(t, func() {
-			clickhouseOut.flush() // Should execute normally (no samples, returns early)
-		})
-
-		// Now stop
-		err = clickhouseOut.Stop()
-		require.NoError(t, err)
-
-		// After Stop, closed should be true
-		clickhouseOut.mu.RLock()
-		assert.True(t, clickhouseOut.closed, "closed should be true after Stop")
-		clickhouseOut.mu.RUnlock()
-
-		// flush() should now skip due to closed flag
-		require.NotPanics(t, func() {
-			clickhouseOut.flush()
-		})
-	})
-
-	t.Run("concurrent stop calls are safe with double-check lock", func(t *testing.T) {
-		t.Parallel()
-
-		params := output.Params{Logger: newTestLogger(t)}
-		out, err := New(params)
-		require.NoError(t, err)
-
-		clickhouseOut := out.(*Output)
-
-		var wg sync.WaitGroup
-		numStops := 20
-		wg.Add(numStops)
-		errs := make([]error, numStops)
-
-		for i := range numStops {
-			go func(idx int) {
-				defer wg.Done()
-				errs[idx] = clickhouseOut.Stop()
-			}(i)
-		}
-
-		wg.Wait()
-
-		for i, stopErr := range errs {
-			assert.NoError(t, stopErr, "Stop call %d should not error", i)
-		}
-
-		// Verify final state
-		clickhouseOut.mu.RLock()
-		assert.True(t, clickhouseOut.closed)
-		clickhouseOut.mu.RUnlock()
-	})
-}
-
 // Test for Issue #4: isRetryableError uses typed EOF checks instead of broad "eof" pattern
 func TestIsRetryableError_EOFPatternFix(t *testing.T) {
 	t.Parallel()
@@ -611,36 +518,6 @@ func TestIsRetryableError_CommitError(t *testing.T) {
 		ce := &commitError{err: errors.New("some db error")}
 		assert.Contains(t, ce.Error(), "commit error: some db error")
 	})
-}
-
-// Test for Issue #8: overlapping flushes are prevented
-func TestFlush_OverlappingPrevented(t *testing.T) {
-	t.Parallel()
-
-	params := output.Params{Logger: newTestLogger(t)}
-	out, err := New(params)
-	require.NoError(t, err)
-
-	clickhouseOut := out.(*Output)
-
-	// Hold the flush mutex to simulate a long-running flush
-	clickhouseOut.flushMu.Lock()
-
-	// flush() should return immediately without blocking
-	done := make(chan struct{})
-	go func() {
-		clickhouseOut.flush()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Good — flush returned immediately
-	case <-time.After(1 * time.Second):
-		t.Fatal("flush() blocked when flushMu was held — overlapping flush prevention failed")
-	}
-
-	clickhouseOut.flushMu.Unlock()
 }
 
 func TestBound(t *testing.T) {
