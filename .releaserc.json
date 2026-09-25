@@ -16,7 +16,7 @@
           { "type": "ci", "release": false },
           { "type": "test", "release": false },
           { "type": "style", "release": false },
-          { "breaking": true, "release": "major" }
+          { "breaking": true, "release": "minor" }
         ]
       }
     ],
