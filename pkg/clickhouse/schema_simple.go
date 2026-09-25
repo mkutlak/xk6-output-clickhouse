@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"maps"
 	"time"
 
 	"go.k6.io/k6/v2/metrics"
@@ -89,22 +88,17 @@ type simpleSample struct {
 
 // convertToSimple converts a k6 sample to the simple schema format.
 func convertToSimple(sample metrics.Sample) simpleSample {
-	// Get a reusable map from the pool to reduce allocations
-	tags := tagMapPool.Get().(map[string]string)
-	clear(tags)
+	tags := map[string]string{}
+	if sample.Tags != nil {
+		tags = sample.Tags.Map()
+	}
 
-	ss := simpleSample{
+	return simpleSample{
 		Timestamp: sample.Time,
 		Metric:    sample.Metric.Name,
 		Value:     sample.Value,
 		Tags:      tags,
 	}
-
-	if sample.Tags != nil {
-		maps.Copy(ss.Tags, sample.Tags.Map())
-	}
-
-	return ss
 }
 
 // SimpleConverter implements SampleConverter for the simple schema.
@@ -115,24 +109,5 @@ type SimpleConverter struct{}
 func (c SimpleConverter) Convert(ctx context.Context, sample metrics.Sample) ([]any, error) {
 	ss := convertToSimple(sample)
 
-	// Get row buffer from pool
-	row := simpleRowPool.Get().([]any)
-	row[0] = ss.Timestamp
-	row[1] = ss.Metric
-	row[2] = ss.Value
-	row[3] = ss.Tags
-
-	return row, nil
-}
-
-// Release returns pooled resources after insertion.
-func (c SimpleConverter) Release(row []any) {
-	// Return tag map to pool
-	if len(row) > 3 {
-		if tags, ok := row[3].(map[string]string); ok {
-			tagMapPool.Put(tags)
-		}
-	}
-	// Return row buffer to pool
-	simpleRowPool.Put(row) //nolint:staticcheck // SA6002: pooling a []any boxes the slice header into 'any' (one alloc per Put); accepted to keep the SampleConverter interface stable
+	return []any{ss.Timestamp, ss.Metric, ss.Value, ss.Tags}, nil
 }

@@ -155,95 +155,6 @@ func TestConcurrentConvertToCompatible(t *testing.T) {
 	}
 }
 
-func TestMemoryPoolConcurrentAccess(t *testing.T) {
-	t.Parallel()
-
-	t.Run("concurrent tagMapPool Get and Put", func(t *testing.T) {
-		t.Parallel()
-
-		numGoroutines := 100
-		var wg sync.WaitGroup
-		wg.Add(numGoroutines)
-
-		for range numGoroutines {
-			go func() {
-				defer wg.Done()
-
-				m := tagMapPool.Get().(map[string]string)
-				m["key1"] = "value1"
-				m["key2"] = "value2"
-
-				clear(m)
-				tagMapPool.Put(m)
-			}()
-		}
-
-		wg.Wait()
-
-		m := tagMapPool.Get().(map[string]string)
-		assert.NotNil(t, m)
-		assert.Equal(t, 0, len(m), "Map from pool should be empty")
-		tagMapPool.Put(m)
-	})
-
-	t.Run("concurrent simpleRowPool access", func(t *testing.T) {
-		t.Parallel()
-
-		numGoroutines := 100
-		var wg sync.WaitGroup
-		wg.Add(numGoroutines)
-
-		for range numGoroutines {
-			go func() {
-				defer wg.Done()
-
-				row := simpleRowPool.Get().([]any)
-				row[0] = time.Now()
-				row[1] = "metric"
-				row[2] = 123.45
-				row[3] = map[string]string{"key": "value"}
-
-				simpleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
-			}()
-		}
-
-		wg.Wait()
-
-		row := simpleRowPool.Get().([]any)
-		assert.NotNil(t, row)
-		assert.Equal(t, 4, len(row), "Row slice should have 4 elements")
-		simpleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
-	})
-
-	t.Run("concurrent compatibleRowPool access", func(t *testing.T) {
-		t.Parallel()
-
-		numGoroutines := 100
-		var wg sync.WaitGroup
-		wg.Add(numGoroutines)
-
-		for range numGoroutines {
-			go func() {
-				defer wg.Done()
-
-				row := compatibleRowPool.Get().([]any)
-				for i := range row {
-					row[i] = i
-				}
-
-				compatibleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
-			}()
-		}
-
-		wg.Wait()
-
-		row := compatibleRowPool.Get().([]any)
-		assert.NotNil(t, row)
-		assert.Equal(t, 21, len(row), "Row slice should have 21 elements")
-		compatibleRowPool.Put(row) //nolint:staticcheck // SA6002: slice is reference type, safe to pass directly
-	})
-}
-
 func TestStartStopLifecycleConcurrency(t *testing.T) {
 	t.Parallel()
 
@@ -458,18 +369,6 @@ func BenchmarkConcurrentConvertToSimple(b *testing.B) {
 		for pb.Next() {
 			ss := convertToSimple(sample)
 			_ = ss
-		}
-	})
-}
-
-func BenchmarkConcurrentMemoryPool(b *testing.B) {
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			m := tagMapPool.Get().(map[string]string)
-			m["key"] = "value"
-			clear(m)
-			tagMapPool.Put(m)
 		}
 	})
 }
