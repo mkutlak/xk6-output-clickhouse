@@ -146,7 +146,7 @@ services:
         --user ${CLICKHOUSE_USER:-default}
         --password ${CLICKHOUSE_PASSWORD:-password}
         --database ${CLICKHOUSE_DB:-k6}
-        --query "SELECT throwIf(count() = 0, 'no samples written to ClickHouse') FROM samples"
+        --query "SELECT throwIf(count() = 0, 'no samples written to ClickHouse in the last 10 minutes') FROM samples WHERE timestamp > now() - INTERVAL 10 MINUTE"
     restart: "no"
     networks:
       - k6-network
