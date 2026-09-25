@@ -1,5 +1,9 @@
 # Examples & Usage
 
+See the [README Quick Start](../README.md#quick-start) for building the
+binary and starting ClickHouse. This page covers the example scripts,
+advanced configuration, and sample queries.
+
 ## Example Scripts
 
 The [`examples/`](../examples) directory contains ready-to-run k6 scripts. They
@@ -7,30 +11,16 @@ hold only the k6 *workload* — the ClickHouse output is selected with `--out` (
 `--config`/env vars), never from inside the script:
 
 - `examples/simple.js` — a minimal workload. Run it with an explicit output:
-  `./bin/k6 run --out xk6-clickhouse=localhost:9000 examples/simple.js`
+  `./bin/k6 run --out "xk6-clickhouse=clickhouse://default:password@localhost:9000" examples/simple.js`
 - `examples/tls-config.js` + `examples/tls-config.json` — TLS/mTLS via a `--config`
   file: `./bin/k6 run --config examples/tls-config.json --out xk6-clickhouse examples/tls-config.js`
-
-## Basic Usage
-
-Run a k6 test with ClickHouse output using the default settings:
-
-```bash
-./k6 run --out xk6-clickhouse=localhost:9000 script.js
-```
 
 ## Advanced Examples
 
 ### With Custom Database and Table
 
 ```bash
-./k6 run --out "xk6-clickhouse=localhost:9000?database=perf_tests&table=results" script.js
-```
-
-### With Authentication
-
-```bash
-./k6 run --out "xk6-clickhouse=localhost:9000?user=k6user&password=secret" script.js
+./k6 run --out "xk6-clickhouse=clickhouse://default:password@localhost:9000/perf_tests?table=results" script.js
 ```
 
 ### Using Environment Variables
@@ -90,7 +80,15 @@ file with `--config`:
 2. Select **ClickHouse**.
 3. Configure the connection details (default port is `9000`).
 
-### Common Queries
+## Querying Metrics
+
+The queries below assume the default `simple` schema (`timestamp`, `metric`,
+`value`, `tags` — see [schemas.md](./schemas.md)):
+
+```sql
+SELECT * FROM k6.samples ORDER BY timestamp DESC LIMIT 100;
+SELECT metric, count() AS cnt FROM k6.samples GROUP BY metric ORDER BY cnt DESC;
+```
 
 **Requests per second (RPS):**
 
@@ -118,19 +116,27 @@ GROUP BY time
 ORDER BY time
 ```
 
-## Querying Metrics
-
-```sql
-SELECT * FROM k6.samples ORDER BY timestamp DESC LIMIT 100;
-SELECT metric, count() AS cnt FROM k6.samples GROUP BY metric ORDER BY cnt DESC;
-```
-
 ### Filtering by Tags (Simple Schema)
+
+The simple schema keeps all tags in a `Map(String, String)` column:
 
 ```sql
 SELECT avg(value) FROM k6.samples
 WHERE metric = 'http_req_duration' AND tags['method'] = 'GET';
 
 SELECT tags['status'] AS status, count() AS count
+FROM k6.samples WHERE metric = 'http_reqs' GROUP BY status;
+```
+
+### Filtering by Tags (Compatible Schema)
+
+The compatible schema extracts well-known tags into dedicated columns
+(`method`, `status`, `error_code`, ...); anything else lands in `extra_tags`:
+
+```sql
+SELECT avg(value) FROM k6.samples
+WHERE metric = 'http_req_duration' AND method = 'GET';
+
+SELECT status, count() AS count
 FROM k6.samples WHERE metric = 'http_reqs' GROUP BY status;
 ```

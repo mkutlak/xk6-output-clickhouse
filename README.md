@@ -8,33 +8,40 @@ A [k6](https://k6.io) extension for outputting load test metrics to [ClickHouse]
 
 ## Features
 
-- **Connection Resilience**: Automatic retry and in-memory buffering.
-- **Pluggable Schemas**: Choose between `simple` or `compatible` schemas, or create your own.
+- **Connection Resilience**: Automatic retry with exponential backoff and in-memory sample buffering during outages.
+- **Pluggable Schemas**: Choose between `simple` or `compatible` schemas, or register your own.
 - **TLS/mTLS Support**: Secure connections with certificate management.
-- **Memory Optimized**: Uses object pooling for high-throughput ingestion.
-- **Auto Setup**: Automatically creates database and tables.
+- **Flexible Configuration**: A `clickhouse://` DSN on `--out`, env vars, or a JSON config file — unknown options fail fast at startup.
+- **Auto Setup**: Automatically creates the database and table if they don't exist.
 
 ## Quick Start
 
-### Build
+### 1. Build
 
 ```bash
-# Build with the pinned xk6 version this extension is tested against (see .xk6-version).
-go install go.k6.io/xk6/cmd/xk6@v1.4.14
+go install go.k6.io/xk6/cmd/xk6@latest
 xk6 build --with github.com/mkutlak/xk6-output-clickhouse@latest
 ```
 
-> Prefer `make build` for local development — it uses the pinned xk6 version
-> automatically and writes the binary to `./bin/k6`.
+For reproducible builds, pin a released tag instead of `@latest`, and the xk6
+version from [`.xk6-version`](.xk6-version) that CI tests with. From a clone,
+`make build` does both and writes `./bin/k6`.
 
-### Run
+### 2. Start ClickHouse
 
 ```bash
-# Start ClickHouse
-docker run -d --name clickhouse -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-server
+docker run -d --name clickhouse -p 9000:9000 -e CLICKHOUSE_PASSWORD=password clickhouse/clickhouse-server
+```
 
-# Run k6
-./k6 run --out xk6-clickhouse=localhost:9000 script.js
+Or run `make docker-compose-up` for ClickHouse plus a Grafana instance with
+the datasource pre-provisioned.
+
+### 3. Run k6 and query the data
+
+```bash
+./k6 run --out "xk6-clickhouse=clickhouse://default:password@localhost:9000" examples/simple.js
+
+docker exec clickhouse clickhouse-client --password password -q "SELECT metric, count() FROM k6.samples GROUP BY metric"
 ```
 
 ## Compatibility
@@ -43,15 +50,13 @@ docker run -d --name clickhouse -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-
 | --- | --- |
 | **k6** | **v2.x** — this extension is built on `go.k6.io/k6/v2`. It is **not** compatible with k6 v1.x. |
 | **Go** | 1.26+ |
-| **xk6** | v1.4.14 (pinned in `.xk6-version`) |
+| **xk6** | pinned in [`.xk6-version`](.xk6-version) |
 | **ClickHouse** | native protocol (clickhouse-go/v2); tested against 26.x |
 
-This project is pre-1.0: minor releases may include breaking changes. Pin a
-released tag (e.g. `@v0.6.0`) rather than `@latest` for reproducible builds.
+This project is pre-1.0: minor releases may include breaking changes.
 
-> **Upgrading from a build that used k6 v1.x?** Rebuild with k6 v2.x / the pinned
-> xk6 above. No configuration, schema, env-var, or output-name changes are
-> required — only the k6 module path changed (`go.k6.io/k6` → `go.k6.io/k6/v2`).
+Upgrading from 0.6? See [Migrating from 0.6](./docs/schemas.md#migrating-from-06):
+the custom schema API changed and `bufferMaxSamples` now counts samples.
 
 ## Documentation
 
