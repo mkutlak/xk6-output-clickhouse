@@ -3,12 +3,10 @@ package clickhouse
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"testing"
 	"time"
 
-	clickhouse_go "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	clickhouseModule "github.com/testcontainers/testcontainers-go/modules/clickhouse"
@@ -92,9 +90,10 @@ func mustMarshalJSON(v any) []byte {
 	return data
 }
 
-// StartClickHouseContainer starts a ClickHouse container for testing.
-// Returns the endpoint address (host:port) and a cleanup function.
-func StartClickHouseContainer(t *testing.T) (endpoint string, cleanup func()) {
+// startClickHouseContainer starts a ClickHouse container for testing and
+// returns its native-protocol endpoint (host:port). The container is
+// terminated via t.Cleanup.
+func startClickHouseContainer(t *testing.T) string {
 	t.Helper()
 
 	if testing.Short() {
@@ -102,47 +101,24 @@ func StartClickHouseContainer(t *testing.T) (endpoint string, cleanup func()) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), testContainerTimeout)
+	t.Cleanup(cancel)
 
-	clickhouseContainer, err := clickhouseModule.Run(ctx,
+	container, err := clickhouseModule.Run(ctx,
 		testClickHouseImage,
 		clickhouseModule.WithUsername(testUsername),
 		clickhouseModule.WithPassword(testPassword),
 		clickhouseModule.WithDatabase(testDatabase),
 	)
 	require.NoError(t, err)
-
-	cleanup = func() {
-		cancel()
-		if err := clickhouseContainer.Terminate(context.Background()); err != nil {
+	t.Cleanup(func() {
+		if err := container.Terminate(context.Background()); err != nil {
 			t.Logf("failed to terminate container: %s", err)
 		}
-	}
+	})
 
-	endpoint, err = clickhouseContainer.PortEndpoint(ctx, "9000/tcp", "")
-	if err != nil {
-		cleanup()
-		require.NoError(t, err)
-	}
+	endpoint, err := container.ConnectionHost(ctx)
+	require.NoError(t, err)
 
 	t.Logf("ClickHouse running at %s", endpoint)
-	return endpoint, cleanup
-}
-
-// CreateDatabase creates a database in the ClickHouse instance.
-func CreateDatabase(t *testing.T, endpoint, dbName string) {
-	t.Helper()
-
-	conn, err := clickhouse_go.Open(&clickhouse_go.Options{
-		Addr: []string{endpoint},
-		Auth: clickhouse_go.Auth{
-			Database: testDatabase,
-			Username: testUsername,
-			Password: testPassword,
-		},
-	})
-	require.NoError(t, err)
-
-	err = conn.Exec(context.Background(), fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", dbName))
-	require.NoError(t, err)
-	require.NoError(t, conn.Close())
+	return endpoint
 }
