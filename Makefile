@@ -126,10 +126,16 @@ docker-dev:
 	@docker compose --profile dev up --build
 
 # Run examples/simple.js against ClickHouse in docker compose, then fail unless
-# test-validator finds the written samples
+# test-validator finds the written samples. Steps run one by one because
+# 'up --exit-code-from' stops ClickHouse as soon as k6 exits.
 docker-test:
 	@echo "Running tests in docker compose..."
-	@docker compose --profile test up --build --exit-code-from test-validator
+	@docker compose --profile test build k6-test
+	@status=0; \
+	docker compose --profile test run --rm k6-test && \
+	docker compose --profile test run --rm --no-deps test-validator || status=$$?; \
+	docker compose --profile test down; \
+	exit $$status
 
 # Clean all docker compose resources (volumes, orphans) for this project
 docker-clean-all:
