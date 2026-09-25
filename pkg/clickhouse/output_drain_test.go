@@ -49,7 +49,7 @@ func TestStop_DrainsPendingAndAccountsLoss(t *testing.T) {
 	params := output.Params{Logger: newTestLogger(t)}
 	out, err := New(params)
 	require.NoError(t, err)
-	o := out.(*Output)
+	o := out.(*clickhouseOutput)
 
 	// Simulate samples buffered during a prior outage. db is nil, so the drain
 	// has nowhere to write them, exercising the loss accounting.

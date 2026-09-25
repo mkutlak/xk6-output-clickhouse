@@ -13,7 +13,7 @@ import (
 func TestNewConfig(t *testing.T) {
 	t.Parallel()
 
-	cfg := NewConfig()
+	cfg := defaultConfig()
 
 	assert.Equal(t, "localhost:9000", cfg.Addr)
 	assert.Equal(t, "k6", cfg.Database)
@@ -27,7 +27,7 @@ func TestParseConfig(t *testing.T) {
 	tests := []struct {
 		name           string
 		params         output.Params
-		expectedConfig Config
+		expectedConfig config
 		expectError    bool
 		errorContains  string
 	}{
@@ -37,7 +37,7 @@ func TestParseConfig(t *testing.T) {
 				ConfigArgument: "",
 				JSONConfig:     nil,
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "localhost:9000",
 				Database:     "k6",
 				Table:        "samples",
@@ -54,7 +54,7 @@ func TestParseConfig(t *testing.T) {
 					"pushInterval": "5s",
 				}),
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "clickhouse.example.com:9000",
 				Database:     "metrics",
 				Table:        "k6_samples",
@@ -69,7 +69,7 @@ func TestParseConfig(t *testing.T) {
 					"database": "custom_db",
 				}),
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "192.168.1.100:9000",
 				Database:     "custom_db",
 				Table:        "samples",
@@ -99,7 +99,7 @@ func TestParseConfig(t *testing.T) {
 			params: output.Params{
 				ConfigArgument: "clickhouse://clickhouse.example.com:9000",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "clickhouse.example.com:9000",
 				Database:     "k6",
 				Table:        "samples",
@@ -111,7 +111,7 @@ func TestParseConfig(t *testing.T) {
 			params: output.Params{
 				ConfigArgument: "localhost:9000?database=prod&table=metrics",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "localhost:9000",
 				Database:     "prod",
 				Table:        "metrics",
@@ -123,7 +123,7 @@ func TestParseConfig(t *testing.T) {
 			params: output.Params{
 				ConfigArgument: "clickhouse-server:9000",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "clickhouse-server:9000",
 				Database:     "k6",
 				Table:        "samples",
@@ -135,7 +135,7 @@ func TestParseConfig(t *testing.T) {
 			params: output.Params{
 				ConfigArgument: "192.168.1.1:9000",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "192.168.1.1:9000",
 				Database:     "k6",
 				Table:        "samples",
@@ -147,7 +147,7 @@ func TestParseConfig(t *testing.T) {
 			params: output.Params{
 				ConfigArgument: "[::1]:9000",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "[::1]:9000",
 				Database:     "k6",
 				Table:        "samples",
@@ -159,7 +159,7 @@ func TestParseConfig(t *testing.T) {
 			params: output.Params{
 				ConfigArgument: "db-host:9000?database=mydb&table=mytable",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "db-host:9000",
 				Database:     "mydb",
 				Table:        "mytable",
@@ -171,7 +171,7 @@ func TestParseConfig(t *testing.T) {
 			params: output.Params{
 				ConfigArgument: "?addr=query-host:9000&database=prod",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "query-host:9000",
 				Database:     "prod",
 				Table:        "samples",
@@ -208,7 +208,7 @@ func TestParseConfig(t *testing.T) {
 					"pushInterval": "",
 				}),
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "localhost:9000",
 				Database:     "k6",
 				Table:        "samples",
@@ -226,7 +226,7 @@ func TestParseConfig(t *testing.T) {
 				}),
 				ConfigArgument: "url-host:9000?database=url_db&table=url_table",
 			},
-			expectedConfig: Config{
+			expectedConfig: config{
 				Addr:         "url-host:9000",
 				Database:     "url_db",
 				Table:        "url_table",
@@ -239,7 +239,7 @@ func TestParseConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, err := ParseConfig(tt.params)
+			cfg, err := parseConfig(tt.params)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -271,7 +271,7 @@ func TestParseConfig_EdgeCases(t *testing.T) {
 			ConfigArgument: "://invalid-url",
 		}
 
-		_, err := ParseConfig(params)
+		_, err := parseConfig(params)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid --out argument")
 	})
@@ -380,7 +380,7 @@ func TestApplyArgument(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := NewConfig()
+			cfg := defaultConfig()
 			err := cfg.applyArgument(tt.arg)
 
 			if tt.wantErr {
@@ -411,7 +411,7 @@ func TestConfig_Struct(t *testing.T) {
 	t.Run("config fields are settable", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := Config{
+		cfg := config{
 			Addr:         "test-host:9000",
 			Database:     "test-db",
 			Table:        "test-table",
@@ -427,7 +427,7 @@ func TestConfig_Struct(t *testing.T) {
 	t.Run("zero value config", func(t *testing.T) {
 		t.Parallel()
 
-		var cfg Config
+		var cfg config
 
 		assert.Equal(t, "", cfg.Addr)
 		assert.Equal(t, "", cfg.Database)
@@ -443,7 +443,7 @@ func TestParseConfig_ZeroValueOverrides(t *testing.T) {
 	t.Run("retryAttempts 0 overrides default", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := ParseConfig(output.Params{
+		cfg, err := parseConfig(output.Params{
 			JSONConfig: mustMarshalJSON(map[string]any{
 				"retryAttempts": 0,
 			}),
@@ -456,7 +456,7 @@ func TestParseConfig_ZeroValueOverrides(t *testing.T) {
 		t.Parallel()
 
 		// First set skipSchemaCreation to true via env, then override to false via JSON
-		cfg, err := ParseConfig(output.Params{
+		cfg, err := parseConfig(output.Params{
 			JSONConfig: mustMarshalJSON(map[string]any{
 				"skipSchemaCreation": false,
 			}),
@@ -468,7 +468,7 @@ func TestParseConfig_ZeroValueOverrides(t *testing.T) {
 	t.Run("skipSchemaCreation true explicitly set", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := ParseConfig(output.Params{
+		cfg, err := parseConfig(output.Params{
 			JSONConfig: mustMarshalJSON(map[string]any{
 				"skipSchemaCreation": true,
 			}),
@@ -480,7 +480,7 @@ func TestParseConfig_ZeroValueOverrides(t *testing.T) {
 	t.Run("unset fields keep defaults", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := ParseConfig(output.Params{
+		cfg, err := parseConfig(output.Params{
 			JSONConfig: mustMarshalJSON(map[string]any{
 				"addr": "custom:9000",
 			}),
@@ -495,7 +495,7 @@ func TestParseConfig_ZeroValueOverrides(t *testing.T) {
 		t.Parallel()
 
 		// bufferMaxSamples: 0 with bufferEnabled: true should fail validation
-		_, err := ParseConfig(output.Params{
+		_, err := parseConfig(output.Params{
 			JSONConfig: mustMarshalJSON(map[string]any{
 				"bufferMaxSamples": 0,
 			}),
@@ -525,7 +525,7 @@ func TestParseConfig_InvalidEnvVars(t *testing.T) {
 		t.Run(tt.envVar, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := ParseConfig(output.Params{
+			_, err := parseConfig(output.Params{
 				Environment: map[string]string{tt.envVar: tt.envValue},
 			})
 			require.Error(t, err)
@@ -600,7 +600,7 @@ func TestParseConfig_InvalidURLParams(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := ParseConfig(output.Params{
+			_, err := parseConfig(output.Params{
 				ConfigArgument: tt.urlParam,
 			})
 			require.Error(t, err)
@@ -616,7 +616,7 @@ func TestConfig_Set(t *testing.T) {
 		t.Parallel()
 
 		for _, o := range options {
-			cfg := NewConfig()
+			cfg := defaultConfig()
 			// "0" is a valid string, bool, integer and duration.
 			assert.NoError(t, cfg.set(o.key, "0"), o.key)
 		}
@@ -625,17 +625,17 @@ func TestConfig_Set(t *testing.T) {
 	t.Run("empty value leaves the option unset", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := NewConfig()
+		cfg := defaultConfig()
 		for _, o := range options {
 			require.NoError(t, cfg.set(o.key, ""), o.key)
 		}
-		assert.Equal(t, NewConfig(), cfg)
+		assert.Equal(t, defaultConfig(), cfg)
 	})
 
 	t.Run("unknown key lists valid options", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := NewConfig()
+		cfg := defaultConfig()
 		err := cfg.set("databse", "k6")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), `unknown option "databse" (valid options: addr, user, password, database, table, pushInterval,`)
@@ -648,7 +648,7 @@ func TestConfig_Set(t *testing.T) {
 func TestParseConfig_EverySource(t *testing.T) {
 	t.Parallel()
 
-	want := Config{
+	want := config{
 		Addr:               "ch.example.com:9440",
 		User:               "k6user",
 		Password:           "secret",
@@ -657,7 +657,7 @@ func TestParseConfig_EverySource(t *testing.T) {
 		PushInterval:       5 * time.Second,
 		SchemaMode:         "compatible",
 		SkipSchemaCreation: true,
-		TLS: TLSConfig{
+		TLS: tlsOptions{
 			Enabled:            true,
 			InsecureSkipVerify: true,
 			CAFile:             testCACertFile,
@@ -750,7 +750,7 @@ func TestParseConfig_EverySource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, err := ParseConfig(params)
+			cfg, err := parseConfig(params)
 			require.NoError(t, err)
 			assert.Equal(t, want, cfg)
 		})
@@ -762,7 +762,7 @@ func TestParseConfig_EverySource(t *testing.T) {
 func TestParseConfig_Precedence(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := ParseConfig(output.Params{
+	cfg, err := parseConfig(output.Params{
 		JSONConfig: mustMarshalJSON(map[string]any{
 			"user":     "json_user",
 			"database": "json_db",
@@ -786,17 +786,17 @@ func TestParseConfig_JSONValues(t *testing.T) {
 	t.Run("null leaves the option unset", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := ParseConfig(output.Params{
+		cfg, err := parseConfig(output.Params{
 			JSONConfig: []byte(`{"database": null, "retryAttempts": null, "tls": null}`),
 		})
 		require.NoError(t, err)
-		assert.Equal(t, NewConfig(), cfg)
+		assert.Equal(t, defaultConfig(), cfg)
 	})
 
 	t.Run("strings are accepted for typed options", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := ParseConfig(output.Params{
+		cfg, err := parseConfig(output.Params{
 			JSONConfig: []byte(`{"retryAttempts": "5", "bufferEnabled": "false", "tls": {"enabled": "true"}}`),
 		})
 		require.NoError(t, err)
@@ -820,7 +820,7 @@ func TestParseConfig_JSONValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := ParseConfig(output.Params{JSONConfig: []byte(tt.json)})
+			_, err := parseConfig(output.Params{JSONConfig: []byte(tt.json)})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errorContains)
 		})
@@ -841,7 +841,7 @@ func TestUnknownEnvVars(t *testing.T) {
 	assert.Empty(t, unknownEnvVars(nil))
 
 	// Unknown variables share the K6_ namespace, so parsing ignores them.
-	cfg, err := ParseConfig(output.Params{Environment: env})
+	cfg, err := parseConfig(output.Params{Environment: env})
 	require.NoError(t, err)
 	assert.Equal(t, "k6", cfg.Database)
 }

@@ -75,6 +75,17 @@ func TestNew(t *testing.T) {
 			expectError:   true,
 			errorContains: "invalid pushInterval",
 		},
+		{
+			name: "unknown schema mode",
+			params: output.Params{
+				Logger: newTestLogger(t),
+				JSONConfig: mustMarshalJSON(map[string]any{
+					"schemaMode": "nope",
+				}),
+			},
+			expectError:   true,
+			errorContains: `unknown schemaMode "nope"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -95,8 +106,8 @@ func TestNew(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, out)
 
-			clickhouseOut, ok := out.(*Output)
-			require.True(t, ok, "output should be of type *Output")
+			clickhouseOut, ok := out.(*clickhouseOutput)
+			require.True(t, ok, "output should be of type *clickhouseOutput")
 			assert.NotNil(t, clickhouseOut.logger)
 			assert.NotNil(t, clickhouseOut.config)
 		})
@@ -120,7 +131,7 @@ func TestNew_ConfigParsing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 
-	clickhouseOut := out.(*Output)
+	clickhouseOut := out.(*clickhouseOutput)
 	assert.Equal(t, "test-host:9000", clickhouseOut.config.Addr)
 	assert.Equal(t, "test_db", clickhouseOut.config.Database)
 	assert.Equal(t, "test_table", clickhouseOut.config.Table)
@@ -132,12 +143,12 @@ func TestOutput_Description(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		config   Config
+		config   config
 		expected string
 	}{
 		{
 			name: "default config",
-			config: Config{
+			config: config{
 				Addr:       "localhost:9000",
 				Database:   "k6",
 				Table:      "samples",
@@ -147,7 +158,7 @@ func TestOutput_Description(t *testing.T) {
 		},
 		{
 			name: "custom config",
-			config: Config{
+			config: config{
 				Addr:       "clickhouse.example.com:9000",
 				Database:   "production",
 				Table:      "metrics",
@@ -157,7 +168,7 @@ func TestOutput_Description(t *testing.T) {
 		},
 		{
 			name: "ipv6 address",
-			config: Config{
+			config: config{
 				Addr:       "[::1]:9000",
 				Database:   "test",
 				Table:      "samples",
@@ -171,7 +182,7 @@ func TestOutput_Description(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			out := &Output{config: tt.config}
+			out := &clickhouseOutput{config: tt.config}
 			assert.Equal(t, tt.expected, out.Description())
 		})
 	}
@@ -227,7 +238,7 @@ func TestOutput_Flush(t *testing.T) {
 		out, err := New(params)
 		require.NoError(t, err)
 
-		clickhouseOut := out.(*Output)
+		clickhouseOut := out.(*clickhouseOutput)
 
 		// Should not panic when there are no buffered samples
 		require.NotPanics(t, func() {
@@ -242,7 +253,7 @@ func TestOutput_Flush(t *testing.T) {
 		out, err := New(params)
 		require.NoError(t, err)
 
-		clickhouseOut := out.(*Output)
+		clickhouseOut := out.(*clickhouseOutput)
 		clickhouseOut.db = nil
 
 		// Should not panic but will fail silently
@@ -267,7 +278,7 @@ func TestOutput_Lifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 
-	clickhouseOut := out.(*Output)
+	clickhouseOut := out.(*clickhouseOutput)
 	assert.NotNil(t, clickhouseOut.logger)
 	assert.Equal(t, "localhost:9000", clickhouseOut.config.Addr)
 
@@ -300,8 +311,8 @@ func TestOutput_ConfigurationValidation(t *testing.T) {
 // Benchmark tests
 
 func BenchmarkOutput_Description(b *testing.B) {
-	out := &Output{
-		config: Config{
+	out := &clickhouseOutput{
+		config: config{
 			Addr:         "localhost:9000",
 			Database:     "k6",
 			Table:        "samples",
@@ -517,7 +528,7 @@ func TestNew_UsesParamsLogger(t *testing.T) {
 	}
 	out, err := New(params)
 	require.NoError(t, err)
-	assert.NotNil(t, out.(*Output).logger)
+	assert.NotNil(t, out.(*clickhouseOutput).logger)
 }
 
 func TestNew_FallbackLogger(t *testing.T) {
@@ -525,7 +536,7 @@ func TestNew_FallbackLogger(t *testing.T) {
 	params := output.Params{}
 	out, err := New(params)
 	require.NoError(t, err)
-	assert.NotNil(t, out.(*Output).logger)
+	assert.NotNil(t, out.(*clickhouseOutput).logger)
 }
 
 func TestNew_WarnsOnUnknownEnvVars(t *testing.T) {

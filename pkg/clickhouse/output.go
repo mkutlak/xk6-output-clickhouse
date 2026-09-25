@@ -43,10 +43,10 @@ func escapeIdentifier(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "\\`") + "`"
 }
 
-// Output implements the output.Output interface
-type Output struct {
+// clickhouseOutput implements k6's output.Output interface
+type clickhouseOutput struct {
 	output.SampleBuffer
-	config          Config
+	config          config
 	logger          logrus.FieldLogger
 	db              *sql.DB
 	periodicFlusher *output.PeriodicFlusher
@@ -75,14 +75,14 @@ type Output struct {
 	}
 }
 
-// Compile-time assertion that *Output satisfies k6's output.Output interface.
+// Compile-time assertion that *clickhouseOutput satisfies k6's output.Output interface.
 // AddMetricSamples is promoted from the embedded output.SampleBuffer; this makes an
 // accidental break surface here rather than at the RegisterExtension call site.
-var _ output.Output = (*Output)(nil)
+var _ output.Output = (*clickhouseOutput)(nil)
 
 // New creates a new ClickHouse output
 func New(params output.Params) (output.Output, error) {
-	cfg, err := ParseConfig(params)
+	cfg, err := parseConfig(params)
 	if err != nil {
 		return nil, err
 	}
@@ -104,14 +104,14 @@ func New(params output.Params) (output.Output, error) {
 		return nil, err
 	}
 
-	tlsConfig, err := cfg.TLS.BuildTLSConfig()
+	tlsConfig, err := cfg.TLS.build()
 	if err != nil {
 		return nil, fmt.Errorf("invalid TLS configuration: %w", err)
 	}
 
 	table := escapeIdentifier(cfg.Database) + "." + escapeIdentifier(cfg.Table)
 
-	o := &Output{
+	o := &clickhouseOutput{
 		config:      cfg,
 		logger:      logger,
 		schema:      schema,
@@ -125,14 +125,14 @@ func New(params output.Params) (output.Output, error) {
 }
 
 // Description returns a human-readable description
-func (o *Output) Description() string {
+func (o *clickhouseOutput) Description() string {
 	return fmt.Sprintf("clickhouse (%s, %s.%s, schema=%s)",
 		o.config.Addr, o.config.Database, o.config.Table, o.config.SchemaMode)
 }
 
 // Start connects to ClickHouse, creates the schema unless skipped, and starts
 // the periodic flusher.
-func (o *Output) Start() (err error) {
+func (o *clickhouseOutput) Start() (err error) {
 	// Connect to ClickHouse without specifying database in auth.
 	// This allows CREATE DATABASE IF NOT EXISTS to work when the target database doesn't exist.
 	// All queries use fully-qualified table names ({database}.{table}), so no default database is needed.
@@ -193,7 +193,7 @@ func (o *Output) Start() (err error) {
 // port with TLS, verification being disabled, and TLS material that will be
 // silently ignored. Called from New so these surface as soon as the output is
 // constructed, before Start attempts a connection.
-func (o *Output) logTLSStatus() {
+func (o *clickhouseOutput) logTLSStatus() {
 	if !o.config.TLS.Enabled {
 		// Surface silently-ignored TLS material so a forgotten tlsEnabled doesn't
 		// leave the connection unencrypted while certs are configured.
@@ -227,12 +227,12 @@ const drainTimeout = 30 * time.Second
 
 // Stop flushes remaining metrics and closes the connection. Only the first
 // call has an effect.
-func (o *Output) Stop() error {
+func (o *clickhouseOutput) Stop() error {
 	o.stopOnce.Do(o.stop)
 	return nil
 }
 
-func (o *Output) stop() {
+func (o *clickhouseOutput) stop() {
 	o.logger.Debug("Stopping")
 
 	// Runs one final flush on the flusher goroutine and waits for it.
@@ -329,7 +329,7 @@ func isRetryableError(err error) bool {
 
 // flush writes buffered samples to ClickHouse with retry logic. It runs only on
 // the periodic flusher goroutine, one call at a time.
-func (o *Output) flush() {
+func (o *clickhouseOutput) flush() {
 	// Previously failed samples go first, followed by new samples flattened
 	// from k6's per-container buffer.
 	samples := o.pending
@@ -376,7 +376,7 @@ func (o *Output) flush() {
 // write converts samples to rows once, then inserts the rows, retrying
 // transient database errors. Samples that fail conversion are counted and
 // discarded. It returns the converted samples, for re-buffering on error.
-func (o *Output) write(ctx context.Context, samples []metrics.Sample) ([]metrics.Sample, error) {
+func (o *clickhouseOutput) write(ctx context.Context, samples []metrics.Sample) ([]metrics.Sample, error) {
 	ok := samples[:0]
 	rows := make([][]any, 0, len(samples))
 	var convertErrors uint64
@@ -452,7 +452,7 @@ func bound(samples []metrics.Sample, limit int, policy string) (kept []metrics.S
 // response is lost, the caller receives a commitError (which is NOT retried).
 // Rows are optimistically counted as written before the commit error is
 // returned, because they may already be persisted.
-func (o *Output) insertRows(ctx context.Context, rows [][]any) error {
+func (o *clickhouseOutput) insertRows(ctx context.Context, rows [][]any) error {
 	if o.db == nil {
 		return errNotStarted
 	}
