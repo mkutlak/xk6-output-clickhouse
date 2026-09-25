@@ -10,6 +10,8 @@ on:
       - main
     paths:
       - 'Dockerfile'
+      - '.xk6-version'
+      - '.golangci.yml'
       - 'pkg/**'
       - 'register.go'
       - 'go.mod'
@@ -89,6 +91,10 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
 
+      - name: Read pinned xk6 version
+        id: xk6version
+        run: echo "XK6_VERSION=$(cat .xk6-version)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
@@ -120,6 +126,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            XK6_VERSION=${{ steps.xk6version.outputs.XK6_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
