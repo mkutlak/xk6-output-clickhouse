@@ -1,122 +1,71 @@
 # Contributing to xk6-output-clickhouse
 
-Thank you for your interest in contributing to `xk6-output-clickhouse`! We welcome contributions from the community to help improve this project.
+## Prerequisites
 
-## Getting Started
+- [Go](https://go.dev/) — version pinned in `go.mod` (1.26+)
+- [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/install/) — required for integration tests and the local stack
+- [xk6](https://github.com/grafana/xk6) — version pinned in `.xk6-version`; `make build` and `make install-tools` read it automatically, no manual install needed
 
-### Prerequisites
-
-- [Go](https://golang.org/doc/install) (1.26 or later — required; the code uses Go 1.26 APIs such as `errors.AsType`)
-- [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/install/) (for integration testing)
-- [Make](https://www.gnu.org/software/make/)
-
-### Setup
-
-1. **Fork the repository** on GitHub.
-2. **Clone your fork** locally:
-
-    ```bash
-    git clone https://github.com/YOUR_USERNAME/xk6-output-clickhouse.git
-    cd xk6-output-clickhouse
-    ```
-
-3. **Install development tools** (xk6, golangci-lint):
-
-    ```bash
-    make install-tools
-    ```
-
-## Development Workflow
-
-### Building
-
-To build the custom k6 binary with the ClickHouse extension:
+## Setup
 
 ```bash
-make build
+git clone https://github.com/YOUR_USERNAME/xk6-output-clickhouse.git
+cd xk6-output-clickhouse
+make install-tools   # installs golangci-lint and xk6 at their pinned versions
 ```
 
-This will produce a `./bin/k6` binary.
+## Building
 
-### Testing
+```bash
+make build   # -> ./bin/k6
+```
 
-We encourage Test Driven Development (TDD).
+## Testing
 
-- **Run unit tests:**
+- `make test-unit` — short mode, no Docker required
+- `make test` — full suite, including `testcontainers-go` integration tests (requires Docker)
+- Single test: `go test -race -run TestName ./pkg/clickhouse/`
+- `make test-coverage` — coverage report at `tests/coverage.html`
 
-  ```bash
-  make test
-  ```
+## Checks
 
-- **Run a single test:**
+- `make check` — fmt, vet, tidy, a `go fix -diff` modernization gate, then tests
+- `make lint` — golangci-lint v2 (`make install-tools` installs the pinned version)
 
-  ```bash
-  go test -race -run TestName ./pkg/clickhouse/
-  ```
+Both must pass before opening a pull request. Run `make help` for the full target list.
 
-- **Run tests with coverage:**
+## Local stack
 
-  ```bash
-  make test-coverage
-  ```
+```bash
+make docker-compose-up   # ClickHouse on :9000 (native) / :8123 (HTTP), Grafana on :3000
+./bin/k6 run --out "xk6-clickhouse=localhost:9000?password=password" examples/simple.js
+make docker-compose-down
+```
 
-### Integration Testing with Docker
+`make docker-test` runs `examples/simple.js` against a Dockerized ClickHouse via `docker compose` and fails unless the samples actually landed in the `samples` table.
 
-To run integration tests or test manually against a local ClickHouse instance:
+## Troubleshooting
 
-1. **Start ClickHouse and Grafana:**
+- **Connection errors** — usually the wrong port: use the native protocol port (`9000` by default), not the HTTP port (`8123`).
+- **TLS enabled on port 9000** — the extension logs a warning suggesting port `9440` for secure connections.
+- **Dropped samples in the final summary** — during an outage, failed samples are kept for retry up to `bufferMaxSamples`; beyond that they are dropped per `bufferDropPolicy`. Raise `bufferMaxSamples` for more headroom.
+- **`pushInterval`** — controls batch size and frequency: a longer interval means bigger, less frequent flushes.
 
-    ```bash
-    make docker-compose-up
-    ```
+## Commits
 
-    - ClickHouse: `http://localhost:8123`
-    - Grafana: `http://localhost:3000`
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) enforced by semantic-release: prefix commits with `feat:`, `fix:`, `docs:`, `refactor:`, etc.
 
-2. **Run k6 tests against the containerized services:**
+While pre-1.0, breaking changes — `feat!:` or a `BREAKING CHANGE:` footer — release as a **MINOR** version (see `.releaserc.json`). This will switch to MAJOR once the project reaches 1.0.
 
-    ```bash
-    make docker-compose-test
-    ```
+## Pull requests
 
-3. **Stop services:**
+1. Create a branch, make your changes, and add tests for them.
+2. Run `make check` and `make lint`; both must pass.
+3. Update `docs/` if you changed configuration or usage.
+4. Push and open a pull request.
 
-    ```bash
-    make docker-compose-down
-    ```
-
-### Code Style & Quality
-
-- **Formatting:** Run `make fmt` to format your code.
-- **Linting:** Run `make lint` to check for linting errors.
-- **All Checks:** Run `make check` to run formatting, vetting, tidying, and testing in one go.
-
-Please ensure `make check` passes before submitting a pull request.
-
-## Pull Request Process
-
-1. Create a new branch for your feature or bug fix:
-
-    ```bash
-    git checkout -b feature/my-new-feature
-    ```
-
-2. Make your changes. Remember to add tests!
-3. Run `make check` to ensure everything is in order.
-4. Commit your changes. This project uses [Conventional Commits](https://www.conventionalcommits.org/)
-   with semantic-release: prefix commits with `feat:`, `fix:`, `docs:`, `refactor:`,
-   etc. **For any change that breaks compatibility (e.g. a k6/Go version bump that
-   drops support for an older version), use `feat!:` or include a `BREAKING CHANGE:`
-   footer** so the release is versioned and announced correctly.
-5. Push to your fork and submit a Pull Request.
-
-### Guidelines
-
-- **Keep it simple:** Avoid over-engineering.
-- **Tests:** Add tests for new features or bug fixes.
-- **Dependencies:** Minimize new dependencies.
-- **Documentation:** Update README.md if you change how the extension is configured or used.
+Keep it simple — avoid over-engineering, and minimize new dependencies.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache 2.0 License](LICENSE).
+By contributing, you agree that your contributions are licensed under the [Apache 2.0 License](LICENSE).
