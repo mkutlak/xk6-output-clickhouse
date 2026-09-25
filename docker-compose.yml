@@ -5,7 +5,7 @@
 #   (default)  — ClickHouse only
 #   dev        — ClickHouse + Grafana + interactive k6 runner
 #   full       — ClickHouse + Grafana
-#   ci / test  — ClickHouse + k6 headless runner + test validator
+#   test       — ClickHouse + k6 headless runner + test validator
 #   manual     — k6-base (not started directly)
 # =============================================================================
 
@@ -59,11 +59,12 @@ services:
       GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
       GF_PLUGINS_PREINSTALL: grafana-clickhouse-datasource
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-password}
     volumes:
       - grafana_data:/var/lib/grafana
-      # Bind-mount provisioning so the ClickHouse datasource/dashboard configs are
-      # actually loaded. A named volume here would shadow ./grafana/provisioning
-      # with an empty directory, leaving Grafana with no datasource.
+      # Bind-mount provisioning so the ClickHouse datasource config is actually
+      # loaded. A named volume here would shadow ./grafana/provisioning with an
+      # empty directory, leaving Grafana with no datasource.
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       clickhouse:
@@ -84,12 +85,12 @@ services:
     profiles:
       - manual
     environment:
-      K6_OUT: ${K6_OUT:-xk6-clickhouse=clickhouse:9000?database=k6&user=default&password=password&schemaMode=compatible}
+      K6_OUT: ${K6_OUT:-xk6-clickhouse}
       K6_CLICKHOUSE_ADDR: ${K6_CLICKHOUSE_ADDR:-clickhouse:9000}
       K6_CLICKHOUSE_DB: ${K6_CLICKHOUSE_DB:-k6}
       K6_CLICKHOUSE_USER: ${K6_CLICKHOUSE_USER:-default}
       K6_CLICKHOUSE_PASSWORD: ${K6_CLICKHOUSE_PASSWORD:-password}
-      K6_CLICKHOUSE_SCHEMA_MODE: ${K6_CLICKHOUSE_SCHEMA_MODE:-compatible}
+      K6_CLICKHOUSE_PUSH_INTERVAL: ${K6_CLICKHOUSE_PUSH_INTERVAL:-1s}
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -109,7 +110,6 @@ services:
     stdin_open: true
     volumes:
       - ./examples:/home/k6/examples:rw
-      - ./scripts:/home/k6/scripts:rw
       - k6_results:/home/k6/results
     command: run /home/k6/examples/simple.js
 
@@ -121,7 +121,6 @@ services:
       service: k6-base
     container_name: xk6-runner-test
     profiles:
-      - ci
       - test
     restart: "no"
     volumes:
@@ -136,7 +135,6 @@ services:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-26.3-alpine}
     container_name: xk6-test-validator
     profiles:
-      - ci
       - test
     depends_on:
       k6-test:
@@ -171,6 +169,3 @@ volumes:
 networks:
   k6-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.0.0/16
