@@ -43,8 +43,8 @@ func newTestLogger(t testing.TB) logrus.FieldLogger {
 	return l
 }
 
-// newTestOutput creates an *Output for testing with optional JSON config.
-func newTestOutput(t testing.TB, config ...map[string]any) *Output {
+// newTestOutput creates a *clickhouseOutput for testing with optional JSON config.
+func newTestOutput(t testing.TB, config ...map[string]any) *clickhouseOutput {
 	t.Helper()
 	var jsonConfig json.RawMessage
 	if len(config) > 0 {
@@ -55,7 +55,7 @@ func newTestOutput(t testing.TB, config ...map[string]any) *Output {
 		JSONConfig: jsonConfig,
 	})
 	require.NoError(t, err)
-	return out.(*Output)
+	return out.(*clickhouseOutput)
 }
 
 // mustMarshalJSON marshals v to JSON or panics.

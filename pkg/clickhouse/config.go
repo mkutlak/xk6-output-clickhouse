@@ -28,20 +28,20 @@ func isValidIdentifier(name string) bool {
 	return validIdentifierRegex.MatchString(name)
 }
 
-// maxRetryAttempts caps Config.RetryAttempts. A sane upper bound prevents two
+// maxRetryAttempts caps config.RetryAttempts. A sane upper bound prevents two
 // footguns: a typo'd huge value stalling every flush (and hanging Stop()), and
 // an integer overflow where flush() passes retry.Attempts(RetryAttempts+1) —
-// MaxUint+1 wraps to 0, which retry-go interprets as INFINITE retry. See Validate().
+// MaxUint+1 wraps to 0, which retry-go interprets as INFINITE retry. See validate().
 const maxRetryAttempts = 100
 
-// Valid values for Config.BufferDropPolicy.
+// Valid values for config.BufferDropPolicy.
 const (
 	dropOldest = "oldest"
 	dropNewest = "newest"
 )
 
-// TLSConfig holds TLS/SSL configuration options
-type TLSConfig struct {
+// tlsOptions holds TLS/SSL configuration options
+type tlsOptions struct {
 	// Enabled controls whether TLS is enabled
 	Enabled bool
 
@@ -61,7 +61,7 @@ type TLSConfig struct {
 	ServerName string
 }
 
-// Config holds the ClickHouse output configuration. NewConfig returns the
+// config holds the ClickHouse output configuration. defaultConfig returns the
 // defaults; options lists every key and its environment variable.
 //
 // Configuration sources (in priority order):
@@ -69,7 +69,7 @@ type TLSConfig struct {
 //  2. URL parameters (e.g. --out xk6-clickhouse=...?param=value)
 //  3. JSON config file (collectors.xk6-clickhouse, via --config)
 //  4. Default values
-type Config struct {
+type config struct {
 	// Addr is the ClickHouse server address (host:port).
 	Addr string
 
@@ -95,7 +95,7 @@ type Config struct {
 	SkipSchemaCreation bool
 
 	// TLS holds TLS/SSL configuration
-	TLS TLSConfig
+	TLS tlsOptions
 
 	// RetryAttempts is the maximum number of retries per flush; 0 fails immediately.
 	RetryAttempts uint
@@ -118,10 +118,10 @@ type Config struct {
 	BufferDropPolicy string
 }
 
-// Validate checks the configuration for validity
+// validate checks the configuration for validity
 //
 //nolint:gocyclo // complexity is acceptable for validation with many fields
-func (c Config) Validate() error {
+func (c config) validate() error {
 	if c.Addr == "" {
 		return fmt.Errorf("clickhouse address is required")
 	}
@@ -150,12 +150,6 @@ func (c Config) Validate() error {
 		return fmt.Errorf("push interval must be positive, got %v", c.PushInterval)
 	}
 
-	// Validate schema mode against registered implementations
-	if _, err := getSchema(c.SchemaMode); err != nil {
-		return fmt.Errorf("invalid schemaMode: %s (available: %v)", c.SchemaMode, availableSchemas())
-	}
-
-	// Validate retry configuration
 	if c.RetryAttempts > maxRetryAttempts {
 		return fmt.Errorf("retry attempts must not exceed %d, got %d", maxRetryAttempts, c.RetryAttempts)
 	}
@@ -175,7 +169,6 @@ func (c Config) Validate() error {
 		return fmt.Errorf("retry delay (%v) cannot exceed max delay (%v)", c.RetryDelay, c.RetryMaxDelay)
 	}
 
-	// Validate buffer configuration
 	if c.BufferEnabled && c.BufferMaxSamples <= 0 {
 		return fmt.Errorf("buffer max samples must be positive when buffering is enabled, got %d", c.BufferMaxSamples)
 	}
@@ -186,9 +179,9 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// NewConfig returns a Config with default values
-func NewConfig() Config {
-	return Config{
+// defaultConfig returns a config with default values
+func defaultConfig() config {
+	return config{
 		Addr:             "localhost:9000",
 		User:             "default",
 		Database:         "k6",
@@ -263,7 +256,7 @@ func unknownOptionError(key string) error {
 // the option unchanged.
 //
 //nolint:gocyclo // one case per option
-func (c *Config) set(key, value string) error {
+func (c *config) set(key, value string) error {
 	if !isOption(key) {
 		return unknownOptionError(key)
 	}
@@ -324,10 +317,10 @@ func (c *Config) set(key, value string) error {
 	return nil
 }
 
-// ParseConfig builds a Config from defaults, the JSON config, the config
+// parseConfig builds a config from defaults, the JSON config, the config
 // argument and the environment, each overriding the previous, and validates it.
-func ParseConfig(params output.Params) (Config, error) {
-	cfg := NewConfig()
+func parseConfig(params output.Params) (config, error) {
+	cfg := defaultConfig()
 
 	if params.JSONConfig != nil {
 		if err := cfg.applyJSON(params.JSONConfig); err != nil {
@@ -347,7 +340,7 @@ func ParseConfig(params output.Params) (Config, error) {
 		}
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.validate(); err != nil {
 		return cfg, fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -356,7 +349,7 @@ func ParseConfig(params output.Params) (Config, error) {
 
 // applyJSON applies the collectors.xk6-clickhouse object. TLS options may be
 // nested in a "tls" object.
-func (c *Config) applyJSON(data []byte) error {
+func (c *config) applyJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
@@ -452,7 +445,7 @@ func parseArgumentURL(arg string) (*url.URL, error) {
 
 // applyArgument applies the --out argument, a ClickHouse DSN of the form
 // [clickhouse://][user[:password]@]host:port[/database][?option=value&...].
-func (c *Config) applyArgument(arg string) error {
+func (c *config) applyArgument(arg string) error {
 	u, err := parseArgumentURL(arg)
 	if err != nil {
 		return err
@@ -506,9 +499,9 @@ func unknownEnvVars(env map[string]string) []string {
 	return unknown
 }
 
-// BuildTLSConfig builds a *tls.Config from the TLSConfig settings
+// build builds a *tls.Config from the tlsOptions settings.
 // Returns nil, nil if TLS is not enabled (valid nil value, not an error)
-func (tc TLSConfig) BuildTLSConfig() (*tls.Config, error) {
+func (tc tlsOptions) build() (*tls.Config, error) {
 	if !tc.Enabled {
 		return nil, nil //nolint:nilnil // nil TLS config is valid when TLS is disabled
 	}
@@ -523,18 +516,15 @@ func (tc TLSConfig) BuildTLSConfig() (*tls.Config, error) {
 		ServerName:         tc.ServerName,
 	}
 
-	// Start with system CA pool
 	var certPool *x509.CertPool
 	var err error
 
 	certPool, err = x509.SystemCertPool()
 	if err != nil {
-		// On some systems (like Windows), SystemCertPool might not be available
-		// Fall back to an empty pool
+		// On some systems (like Windows), SystemCertPool might not be available.
 		certPool = x509.NewCertPool()
 	}
 
-	// Append custom CA certificate if provided
 	if tc.CAFile != "" {
 		caCert, err := os.ReadFile(tc.CAFile)
 		if err != nil {
@@ -548,7 +538,6 @@ func (tc TLSConfig) BuildTLSConfig() (*tls.Config, error) {
 
 	tlsConfig.RootCAs = certPool
 
-	// Load client certificate and key if provided
 	if tc.CertFile != "" && tc.KeyFile != "" {
 		cert, err := tls.LoadX509KeyPair(tc.CertFile, tc.KeyFile)
 		if err != nil {

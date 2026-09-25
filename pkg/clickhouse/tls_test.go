@@ -155,11 +155,11 @@ func generateClientCert(dir string) (certFile, keyFile string) {
 func TestTLSConfig_BuildTLSConfig_Disabled(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: false,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	require.NoError(t, err)
 	assert.Nil(t, result, "BuildTLSConfig should return nil when TLS is disabled")
 }
@@ -167,11 +167,11 @@ func TestTLSConfig_BuildTLSConfig_Disabled(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_EnabledWithSystemCA(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: true,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -183,12 +183,12 @@ func TestTLSConfig_BuildTLSConfig_EnabledWithSystemCA(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_WithCustomCA(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: true,
 		CAFile:  testCACertFile,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -199,13 +199,13 @@ func TestTLSConfig_BuildTLSConfig_WithCustomCA(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_WithClientCertificate(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled:  true,
 		CertFile: testClientCert,
 		KeyFile:  testClientKey,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -216,12 +216,12 @@ func TestTLSConfig_BuildTLSConfig_WithClientCertificate(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_InsecureSkipVerify(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled:            true,
 		InsecureSkipVerify: true,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -231,12 +231,12 @@ func TestTLSConfig_BuildTLSConfig_InsecureSkipVerify(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_WithServerName(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled:    true,
 		ServerName: "clickhouse.example.com",
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -246,12 +246,12 @@ func TestTLSConfig_BuildTLSConfig_WithServerName(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_InvalidCAFile(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: true,
 		CAFile:  "/nonexistent/ca.pem",
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to read CA certificate file")
@@ -265,12 +265,12 @@ func TestTLSConfig_BuildTLSConfig_InvalidCAContent(t *testing.T) {
 	err := os.WriteFile(invalidCAFile, []byte("not a valid PEM certificate"), 0o600)
 	require.NoError(t, err)
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: true,
 		CAFile:  invalidCAFile,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to parse CA certificate")
@@ -279,13 +279,13 @@ func TestTLSConfig_BuildTLSConfig_InvalidCAContent(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_InvalidClientCert(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled:  true,
 		CertFile: "/nonexistent/cert.pem",
 		KeyFile:  testClientKey,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to load client certificate/key pair")
@@ -294,13 +294,13 @@ func TestTLSConfig_BuildTLSConfig_InvalidClientCert(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_InvalidClientKey(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled:  true,
 		CertFile: testClientCert,
 		KeyFile:  "/nonexistent/key.pem",
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to load client certificate/key pair")
@@ -309,7 +309,7 @@ func TestTLSConfig_BuildTLSConfig_InvalidClientKey(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_CompleteConfiguration(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled:            true,
 		InsecureSkipVerify: false,
 		CAFile:             testCACertFile,
@@ -318,7 +318,7 @@ func TestTLSConfig_BuildTLSConfig_CompleteConfiguration(t *testing.T) {
 		ServerName:         "clickhouse.example.com",
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -344,7 +344,7 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 			}),
 		}
 
-		cfg, err := ParseConfig(params)
+		cfg, err := parseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 	})
@@ -365,7 +365,7 @@ func TestParseConfig_TLS_JSON(t *testing.T) {
 			}),
 		}
 
-		cfg, err := ParseConfig(params)
+		cfg, err := parseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 		assert.True(t, cfg.TLS.InsecureSkipVerify)
@@ -386,7 +386,7 @@ func TestParseConfig_TLS_URL(t *testing.T) {
 			ConfigArgument: "localhost:9440?tlsEnabled=true",
 		}
 
-		cfg, err := ParseConfig(params)
+		cfg, err := parseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 	})
@@ -398,7 +398,7 @@ func TestParseConfig_TLS_URL(t *testing.T) {
 			ConfigArgument: "localhost:9440?tlsEnabled=true&tlsInsecureSkipVerify=true",
 		}
 
-		cfg, err := ParseConfig(params)
+		cfg, err := parseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 		assert.True(t, cfg.TLS.InsecureSkipVerify)
@@ -414,7 +414,7 @@ func TestParseConfig_TLS_Environment(t *testing.T) {
 		params := output.Params{
 			Environment: map[string]string{"K6_CLICKHOUSE_TLS_ENABLED": "true"},
 		}
-		cfg, err := ParseConfig(params)
+		cfg, err := parseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 	})
@@ -432,7 +432,7 @@ func TestParseConfig_TLS_Environment(t *testing.T) {
 				"K6_CLICKHOUSE_TLS_SERVER_NAME":          "clickhouse.local",
 			},
 		}
-		cfg, err := ParseConfig(params)
+		cfg, err := parseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 		assert.False(t, cfg.TLS.InsecureSkipVerify)
@@ -462,7 +462,7 @@ func TestParseConfig_TLS_Priority(t *testing.T) {
 			},
 		}
 
-		cfg, err := ParseConfig(params)
+		cfg, err := parseConfig(params)
 		require.NoError(t, err)
 		assert.True(t, cfg.TLS.Enabled)
 		assert.Equal(t, "env.example.com", cfg.TLS.ServerName)
@@ -472,12 +472,12 @@ func TestParseConfig_TLS_Priority(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_CertWithoutKey(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled:  true,
 		CertFile: testClientCert,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "TLS client certificate and key must be specified together")
@@ -486,12 +486,12 @@ func TestTLSConfig_BuildTLSConfig_CertWithoutKey(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_KeyWithoutCert(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: true,
 		KeyFile: testClientKey,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "TLS client certificate and key must be specified together")
@@ -500,12 +500,12 @@ func TestTLSConfig_BuildTLSConfig_KeyWithoutCert(t *testing.T) {
 func TestTLSConfig_BuildTLSConfig_CADirectory(t *testing.T) {
 	t.Parallel()
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: true,
 		CAFile:  t.TempDir(),
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to read CA certificate file")
@@ -521,12 +521,12 @@ func TestTLSConfig_BuildTLSConfig_UnreadableCAFile(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "unreadable-ca.pem")
 	require.NoError(t, os.WriteFile(file, []byte("test content"), 0o000))
 
-	tlsConfig := TLSConfig{
+	tlsConfig := tlsOptions{
 		Enabled: true,
 		CAFile:  file,
 	}
 
-	result, err := tlsConfig.BuildTLSConfig()
+	result, err := tlsConfig.build()
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to read CA certificate file")

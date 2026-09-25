@@ -34,7 +34,7 @@ func TestParseConfig_SkipSchemaCreation_URLBoolParsing(t *testing.T) {
 		t.Run(tc.value, func(t *testing.T) {
 			t.Parallel()
 
-			cfg, err := ParseConfig(output.Params{
+			cfg, err := parseConfig(output.Params{
 				ConfigArgument: "localhost:9000?skipSchemaCreation=" + tc.value,
 			})
 			if tc.wantError {
@@ -50,17 +50,17 @@ func TestParseConfig_SkipSchemaCreation_URLBoolParsing(t *testing.T) {
 
 // TestConfig_Validate_RetryAttemptsBound guards against the overflow→infinite-retry
 // footgun (MaxUint+1 wraps to 0 = infinite) and the large-value stall by capping
-// RetryAttempts in Validate().
+// RetryAttempts in validate().
 func TestConfig_Validate_RetryAttemptsBound(t *testing.T) {
 	t.Parallel()
 
 	t.Run("MaxUint is rejected (overflow guard)", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := NewConfig()
+		cfg := defaultConfig()
 		cfg.RetryAttempts = math.MaxUint
 
-		err := cfg.Validate()
+		err := cfg.validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "retry attempts must not exceed")
 	})
@@ -68,10 +68,10 @@ func TestConfig_Validate_RetryAttemptsBound(t *testing.T) {
 	t.Run("just above cap is rejected", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := NewConfig()
+		cfg := defaultConfig()
 		cfg.RetryAttempts = maxRetryAttempts + 1
 
-		err := cfg.Validate()
+		err := cfg.validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "retry attempts must not exceed")
 	})
@@ -79,10 +79,10 @@ func TestConfig_Validate_RetryAttemptsBound(t *testing.T) {
 	t.Run("at cap is allowed", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := NewConfig()
+		cfg := defaultConfig()
 		cfg.RetryAttempts = maxRetryAttempts
 
-		assert.NoError(t, cfg.Validate())
+		assert.NoError(t, cfg.validate())
 	})
 }
 
@@ -95,12 +95,12 @@ func TestConfig_Validate_RetryMaxDelayZero(t *testing.T) {
 	t.Run("zero max delay rejected when retries enabled", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := NewConfig()
+		cfg := defaultConfig()
 		cfg.RetryAttempts = 3
 		cfg.RetryDelay = 100 * time.Millisecond
 		cfg.RetryMaxDelay = 0
 
-		err := cfg.Validate()
+		err := cfg.validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "retry max delay must be positive when retries are enabled")
 	})
@@ -108,11 +108,11 @@ func TestConfig_Validate_RetryMaxDelayZero(t *testing.T) {
 	t.Run("zero max delay allowed when retries disabled", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := NewConfig()
+		cfg := defaultConfig()
 		cfg.RetryAttempts = 0
 		cfg.RetryMaxDelay = 0
 
-		assert.NoError(t, cfg.Validate())
+		assert.NoError(t, cfg.validate())
 	})
 }
 
@@ -121,7 +121,7 @@ func TestConfig_Validate_RetryMaxDelayZero(t *testing.T) {
 func TestParseConfig_EnvOverridesURL_CoreFields(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := ParseConfig(output.Params{
+	cfg, err := parseConfig(output.Params{
 		ConfigArgument: "url-host:9000?user=url_user&database=url_db&table=url_table",
 		Environment: map[string]string{
 			"K6_CLICKHOUSE_ADDR":  "env-host:9000",
@@ -137,47 +137,46 @@ func TestParseConfig_EnvOverridesURL_CoreFields(t *testing.T) {
 	assert.Equal(t, "env_table", cfg.Table, "env table should override URL table")
 }
 
-// TestConfig_Validate covers the non-TLS error branches of Validate() directly,
+// TestConfig_Validate covers the non-TLS error branches of validate() directly,
 // constructing Configs from NewConfig() and mutating a single field to invalid.
 func TestConfig_Validate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name          string
-		mutate        func(c *Config)
+		mutate        func(c *config)
 		errorContains string
 	}{
-		{"empty addr", func(c *Config) { c.Addr = "" }, "address is required"},
-		{"empty user", func(c *Config) { c.User = "" }, "user is required"},
-		{"empty database", func(c *Config) { c.Database = "" }, "database name is required"},
-		{"invalid database", func(c *Config) { c.Database = "bad-name!" }, "invalid database name"},
-		{"empty table", func(c *Config) { c.Table = "" }, "table name is required"},
-		{"invalid table", func(c *Config) { c.Table = "bad table" }, "invalid table name"},
-		{"database with SQL injection", func(c *Config) { c.Database = "k6'; DROP TABLE samples; --" }, "invalid database name"},
-		{"table with SQL injection", func(c *Config) { c.Table = "samples'; DROP DATABASE k6; --" }, "invalid table name"},
-		{"non-positive push interval", func(c *Config) { c.PushInterval = 0 }, "push interval must be positive"},
-		{"invalid schema mode", func(c *Config) { c.SchemaMode = "nope" }, "invalid schemaMode"},
-		{"negative retry delay", func(c *Config) { c.RetryDelay = -1 }, "retry delay must be non-negative"},
-		{"retry delay exceeds max", func(c *Config) {
+		{"empty addr", func(c *config) { c.Addr = "" }, "address is required"},
+		{"empty user", func(c *config) { c.User = "" }, "user is required"},
+		{"empty database", func(c *config) { c.Database = "" }, "database name is required"},
+		{"invalid database", func(c *config) { c.Database = "bad-name!" }, "invalid database name"},
+		{"empty table", func(c *config) { c.Table = "" }, "table name is required"},
+		{"invalid table", func(c *config) { c.Table = "bad table" }, "invalid table name"},
+		{"database with SQL injection", func(c *config) { c.Database = "k6'; DROP TABLE samples; --" }, "invalid database name"},
+		{"table with SQL injection", func(c *config) { c.Table = "samples'; DROP DATABASE k6; --" }, "invalid table name"},
+		{"non-positive push interval", func(c *config) { c.PushInterval = 0 }, "push interval must be positive"},
+		{"negative retry delay", func(c *config) { c.RetryDelay = -1 }, "retry delay must be non-negative"},
+		{"retry delay exceeds max", func(c *config) {
 			c.RetryDelay = 10 * time.Second
 			c.RetryMaxDelay = 5 * time.Second
 		}, "cannot exceed max delay"},
-		{"buffer max samples zero", func(c *Config) {
+		{"buffer max samples zero", func(c *config) {
 			c.BufferEnabled = true
 			c.BufferMaxSamples = 0
 		}, "buffer max samples must be positive"},
-		{"invalid drop policy", func(c *Config) { c.BufferDropPolicy = "random" }, "invalid buffer drop policy"},
-		{"retry attempts over cap", func(c *Config) { c.RetryAttempts = maxRetryAttempts + 1 }, "retry attempts must not exceed"},
+		{"invalid drop policy", func(c *config) { c.BufferDropPolicy = "random" }, "invalid buffer drop policy"},
+		{"retry attempts over cap", func(c *config) { c.RetryAttempts = maxRetryAttempts + 1 }, "retry attempts must not exceed"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := NewConfig()
+			cfg := defaultConfig()
 			tt.mutate(&cfg)
 
-			err := cfg.Validate()
+			err := cfg.validate()
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errorContains)
 		})
@@ -185,6 +184,6 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("default config is valid", func(t *testing.T) {
 		t.Parallel()
-		assert.NoError(t, NewConfig().Validate())
+		assert.NoError(t, defaultConfig().validate())
 	})
 }

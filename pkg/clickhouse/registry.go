@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"go.k6.io/k6/v2/metrics"
@@ -54,7 +55,7 @@ func getSchema(name string) (Schema, error) {
 	schemaRegistryMu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("unknown schema: %q (available: %v)", name, availableSchemas())
+		return nil, fmt.Errorf("unknown schemaMode %q (available: %s)", name, strings.Join(availableSchemas(), ", "))
 	}
 	return s, nil
 }
