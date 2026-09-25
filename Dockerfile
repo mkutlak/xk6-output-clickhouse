@@ -1,15 +1,18 @@
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine3.24 AS builder
 ARG TARGETOS
 ARG TARGETARCH
-ARG XK6_VERSION=latest
+# Optional override; empty = use the pin from .xk6-version
+ARG XK6_VERSION
 ARG MODULE_NAME=github.com/mkutlak/xk6-output-clickhouse
 WORKDIR /build
 
 RUN apk --no-cache add git ca-certificates
 
+COPY .xk6-version ./
+
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    go install go.k6.io/xk6/cmd/xk6@${XK6_VERSION}
+    go install go.k6.io/xk6/cmd/xk6@"${XK6_VERSION:-$(cat .xk6-version)}"
 
 COPY go.mod go.sum ./
 
@@ -27,8 +30,8 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM alpine:3.24
 LABEL org.opencontainers.image.title="xk6-output-clickhouse" \
-      org.opencontainers.image.description="k6 with ClickHouse output extension" \
-      org.opencontainers.image.source="https://github.com/mkutlak/xk6-output-clickhouse"
+    org.opencontainers.image.description="k6 with ClickHouse output extension" \
+    org.opencontainers.image.source="https://github.com/mkutlak/xk6-output-clickhouse"
 
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 12345 k6 && \

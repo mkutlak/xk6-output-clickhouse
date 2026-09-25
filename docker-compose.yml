@@ -80,7 +80,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        XK6_VERSION: ${XK6_VERSION:-latest}
+        # Empty => Dockerfile falls back to the pin in .xk6-version
+        XK6_VERSION: ${XK6_VERSION:-}
     image: xk6-output-clickhouse:latest
     profiles:
       - manual
