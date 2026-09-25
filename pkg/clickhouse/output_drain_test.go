@@ -24,12 +24,12 @@ func makeSampleContainer(t *testing.T) metrics.SampleContainer {
 	}
 }
 
-// TestStop_DrainsFailoverBufferAndAccountsLoss guards the shutdown drain path:
-// the buffer must be emptied, and samples that cannot be drained (here, because
+// TestStop_DrainsPendingAndAccountsLoss guards the shutdown drain path:
+// pending must be emptied, and samples that cannot be drained (here, because
 // the DB is nil) must be counted as dropped rather than silently lost. This pins
 // the regression where a single unretried drain dropped buffered data without
 // any accounting.
-func TestStop_DrainsFailoverBufferAndAccountsLoss(t *testing.T) {
+func TestStop_DrainsPendingAndAccountsLoss(t *testing.T) {
 	t.Parallel()
 
 	params := output.Params{Logger: newTestLogger(t)}
@@ -39,21 +39,17 @@ func TestStop_DrainsFailoverBufferAndAccountsLoss(t *testing.T) {
 
 	// Simulate samples buffered during a prior outage. db is nil, so the drain's
 	// doFlush fails with a non-retryable error, exercising the loss accounting.
-	o.failoverBuffer = NewSampleBuffer(100, DropOldest)
-	dropped := o.failoverBuffer.Push([]metrics.SampleContainer{
-		makeSampleContainer(t),
-		makeSampleContainer(t),
-	})
-	require.Zero(t, dropped, "precondition: nothing dropped on push")
-	require.Equal(t, 2, o.failoverBuffer.Len())
+	o.pending = append(o.pending, makeSampleContainer(t).GetSamples()...)
+	o.pending = append(o.pending, makeSampleContainer(t).GetSamples()...)
+	require.Len(t, o.pending, 2)
 
 	require.NoError(t, o.Stop())
 
-	assert.Equal(t, 0, o.failoverBuffer.Len(), "buffer should be emptied by the shutdown drain")
+	assert.Empty(t, o.pending, "pending should be emptied by the shutdown drain")
 
 	m := o.GetErrorMetrics()
 	assert.Equal(t, uint64(2), m.DroppedSamples,
-		"undrainable buffered containers must be counted as dropped on shutdown")
+		"undrainable pending samples must be counted as dropped on shutdown")
 }
 
 // TestStart_AfterStop_ReturnsClosedError verifies an Output cannot be restarted

@@ -30,6 +30,12 @@ func isValidIdentifier(name string) bool {
 // MaxUint+1 wraps to 0, which retry-go interprets as INFINITE retry. See Validate().
 const maxRetryAttempts = 100
 
+// Valid values for Config.BufferDropPolicy.
+const (
+	dropOldest = "oldest"
+	dropNewest = "newest"
+)
+
 // TLSConfig holds TLS/SSL configuration options
 type TLSConfig struct {
 	// Enabled controls whether TLS is enabled
@@ -72,7 +78,7 @@ type TLSConfig struct {
 //   - RetryDelay: 100ms
 //   - RetryMaxDelay: 5s
 //   - BufferEnabled: true
-//   - BufferMaxSamples: 10000
+//   - BufferMaxSamples: 100000
 //   - BufferDropPolicy: "oldest"
 //
 // Configuration sources (in priority order):
@@ -140,9 +146,9 @@ type Config struct {
 	// Env: K6_CLICKHOUSE_BUFFER_ENABLED
 	BufferEnabled bool
 
-	// BufferMaxSamples is the maximum number of sample containers to buffer.
+	// BufferMaxSamples is the maximum number of samples to buffer.
 	// When exceeded, samples are dropped according to BufferDropPolicy.
-	// Default: 10000
+	// Default: 100000
 	// Env: K6_CLICKHOUSE_BUFFER_MAX_SAMPLES
 	BufferMaxSamples int
 
@@ -273,8 +279,8 @@ func (c Config) Validate() error {
 	if c.BufferEnabled && c.BufferMaxSamples <= 0 {
 		return fmt.Errorf("buffer max samples must be positive when buffering is enabled, got %d", c.BufferMaxSamples)
 	}
-	if c.BufferDropPolicy != "" && c.BufferDropPolicy != "oldest" && c.BufferDropPolicy != "newest" {
-		return fmt.Errorf("invalid buffer drop policy: %s (valid: oldest, newest)", c.BufferDropPolicy)
+	if c.BufferDropPolicy != "" && c.BufferDropPolicy != dropOldest && c.BufferDropPolicy != dropNewest {
+		return fmt.Errorf("invalid buffer drop policy: %s (valid: %s, %s)", c.BufferDropPolicy, dropOldest, dropNewest)
 	}
 
 	return nil
@@ -303,10 +309,10 @@ func NewConfig() Config {
 		RetryAttempts: 3,
 		RetryDelay:    100 * time.Millisecond,
 		RetryMaxDelay: 5 * time.Second,
-		// Buffer defaults: enabled with 10K sample capacity, drop oldest on overflow
+		// Buffer defaults: enabled with 100K sample capacity, drop oldest on overflow
 		BufferEnabled:    true,
-		BufferMaxSamples: 10000,
-		BufferDropPolicy: "oldest",
+		BufferMaxSamples: 100000,
+		BufferDropPolicy: dropOldest,
 	}
 }
 

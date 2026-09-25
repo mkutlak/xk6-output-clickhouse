@@ -12,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.k6.io/k6/v2/metrics"
 	"go.k6.io/k6/v2/output"
 )
 
@@ -640,6 +641,74 @@ func TestFlush_OverlappingPrevented(t *testing.T) {
 	}
 
 	clickhouseOut.flushMu.Unlock()
+}
+
+func TestBound(t *testing.T) {
+	t.Parallel()
+
+	newSamples := func(values ...float64) []metrics.Sample {
+		samples := make([]metrics.Sample, len(values))
+		for i, v := range values {
+			samples[i] = metrics.Sample{Value: v}
+		}
+		return samples
+	}
+
+	tests := []struct {
+		name        string
+		samples     []metrics.Sample
+		limit       int
+		policy      string
+		wantValues  []float64
+		wantDropped int
+	}{
+		{
+			name:        "under limit keeps everything, oldest policy",
+			samples:     newSamples(1, 2, 3),
+			limit:       5,
+			policy:      dropOldest,
+			wantValues:  []float64{1, 2, 3},
+			wantDropped: 0,
+		},
+		{
+			name:        "at limit keeps everything, newest policy",
+			samples:     newSamples(1, 2, 3),
+			limit:       3,
+			policy:      dropNewest,
+			wantValues:  []float64{1, 2, 3},
+			wantDropped: 0,
+		},
+		{
+			name:        "over limit drops oldest",
+			samples:     newSamples(1, 2, 3, 4, 5),
+			limit:       3,
+			policy:      dropOldest,
+			wantValues:  []float64{3, 4, 5},
+			wantDropped: 2,
+		},
+		{
+			name:        "over limit drops newest",
+			samples:     newSamples(1, 2, 3, 4, 5),
+			limit:       3,
+			policy:      dropNewest,
+			wantValues:  []float64{1, 2, 3},
+			wantDropped: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			kept, dropped := bound(tt.samples, tt.limit, tt.policy)
+			assert.Equal(t, tt.wantDropped, dropped)
+
+			require.Len(t, kept, len(tt.wantValues))
+			for i, want := range tt.wantValues {
+				assert.Equal(t, want, kept[i].Value)
+			}
+		})
+	}
 }
 
 func TestNew_UsesParamsLogger(t *testing.T) {

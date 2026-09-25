@@ -34,14 +34,6 @@ func (m *mockSampleContainer) GetSamples() []metrics.Sample {
 	return m.samples
 }
 
-func newMockContainer(id int) metrics.SampleContainer {
-	return &mockSampleContainer{
-		samples: []metrics.Sample{
-			{Value: float64(id)},
-		},
-	}
-}
-
 // newTestLogger creates a logrus logger for testing that discards output.
 func newTestLogger(t testing.TB) logrus.FieldLogger {
 	t.Helper()
