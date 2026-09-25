@@ -1,3 +1,54 @@
+## [0.7.0](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.6.2...v0.7.0) (2026-09-25)
+
+### ⚠ BREAKING CHANGES
+
+* the --out argument only accepts the clickhouse:// scheme
+(or no scheme); other schemes such as http:// are rejected.
+* unknown --out query parameters and JSON config keys are
+now errors instead of being ignored.
+* ErrorMetrics and Output.GetErrorMetrics are removed; the
+counters are reported in the log line emitted when the output stops.
+* bufferMaxSamples counts individual samples, not sample
+containers; its default rises from 10000 to 100000. SampleBuffer,
+NewSampleBuffer and DropPolicy are removed.
+* SchemaCreator, SampleConverter and SchemaImplementation
+are replaced by Schema; RegisterSchema takes (name, schema).
+GetSchema and AvailableSchemas are no longer exported.
+* SampleConverter no longer has a Release method.
+
+### Features
+
+* accept a full ClickHouse DSN in the --out argument ([7ad5b07](https://github.com/mkutlak/xk6-output-clickhouse/commit/7ad5b07bd49e55c327a78ec1b042b2b7abab904d))
+* parse every config source through one option table ([3df186e](https://github.com/mkutlak/xk6-output-clickhouse/commit/3df186ec504eea16ab051b998dd7c7ba866c520a))
+* replace schema interfaces with a single Schema ([855ca5f](https://github.com/mkutlak/xk6-output-clickhouse/commit/855ca5f3984b753dc355a3a05aed278db672813b))
+
+### Bug Fixes
+
+* keep DSN passwords out of errors and restore case-insensitive JSON keys ([0e8afd8](https://github.com/mkutlak/xk6-output-clickhouse/commit/0e8afd824dd17deca3f292b9102a02b93749d072))
+* retry flushes that hit a stale pooled connection ([2f8c6c9](https://github.com/mkutlak/xk6-output-clickhouse/commit/2f8c6c99a16c23f6e2569bb8b2259ff0115ef282))
+
+### Code Refactoring
+
+* convert samples once and keep one retry path ([44fc4cc](https://github.com/mkutlak/xk6-output-clickhouse/commit/44fc4cc8acdc0efcf363e3fd810fca7ac7b80c5a))
+* drop flush locks, WaitGroup and shutdown context ([c068537](https://github.com/mkutlak/xk6-output-clickhouse/commit/c0685373966aa0a9af920c0566a3117ea6b25617))
+* drop sync.Pool reuse and SampleConverter.Release ([0055eac](https://github.com/mkutlak/xk6-output-clickhouse/commit/0055eac6bf4f624716024dab34fe6fc9b9e807fd))
+* export only New, Schema and RegisterSchema ([4fba4a4](https://github.com/mkutlak/xk6-output-clickhouse/commit/4fba4a4628fbaed23869344ef2eb58316ed89c9b))
+* replace the failover ring buffer with a bounded slice ([403a2e7](https://github.com/mkutlak/xk6-output-clickhouse/commit/403a2e7d09ef29bd34744fb04ca1490ec9c33644))
+* resolve schema, table and TLS once when the output is created ([e466674](https://github.com/mkutlak/xk6-output-clickhouse/commit/e466674035d818c1eca9a618d699fbd193a4ab41))
+
+### Documentation
+
+* **claude:** correct delivery, test and tooling facts; add gotchas ([d308cf1](https://github.com/mkutlak/xk6-output-clickhouse/commit/d308cf15d35f20dd8bc82c817f7b1b05ad676236))
+* **claude:** describe the current architecture; drop the duplicated rules file ([5b584af](https://github.com/mkutlak/xk6-output-clickhouse/commit/5b584affda10a55dcc55112b4a71ef1fc7e3f1f6))
+* **claude:** list driver.ErrBadConn as retryable; note main.yaml reads .xk6-version ([38d2169](https://github.com/mkutlak/xk6-output-clickhouse/commit/38d21694e83d838ffcfc8d262e9cf927838e8b6a))
+* **configuration:** one options table, DSN syntax and startup errors ([493ac1d](https://github.com/mkutlak/xk6-output-clickhouse/commit/493ac1df39d1018a55979bae47486ca3abb34d21))
+* describe delivery as at-most-once, not at-least-once ([c4721dc](https://github.com/mkutlak/xk6-output-clickhouse/commit/c4721dcca4983bb65403ee27590aed3c6648d5c7))
+* **examples:** target quickpizza.grafana.com and trim TLS example header ([c086650](https://github.com/mkutlak/xk6-output-clickhouse/commit/c08665007b4322e1453c3b4546030c6b78f1c06f))
+* merge docs/development.md into CONTRIBUTING.md ([e6241b4](https://github.com/mkutlak/xk6-output-clickhouse/commit/e6241b4c3361e4b0e975ad5f128a69951d329399))
+* **README:** add prebuilt image, configuration, resilience and troubleshooting sections ([33d57b6](https://github.com/mkutlak/xk6-output-clickhouse/commit/33d57b6f7738411b15d9d6339107996628be9f0d))
+* **schemas:** document the Schema API and a 0.6 migration path ([ceaf5a1](https://github.com/mkutlak/xk6-output-clickhouse/commit/ceaf5a1906860cbebd5f238b304abf6a1fc6ea00))
+* three-step quick start with a DSN and a query to see the data ([b8d190b](https://github.com/mkutlak/xk6-output-clickhouse/commit/b8d190bab010656188699f184a7f213e2aa33b5c))
+
 ## [0.6.2](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.6.1...v0.6.2) (2026-07-03)
 
 ## [0.6.1](https://github.com/mkutlak/xk6-output-clickhouse/compare/v0.6.0...v0.6.1) (2026-06-10)
