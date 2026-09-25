@@ -1,133 +1,132 @@
 # Configuration
 
-xk6-output-clickhouse can be configured via environment variables, URL parameters, or a JSON config file.
+Priority (highest wins): env vars (`K6_CLICKHOUSE_*`) > `--out` argument >
+JSON config (`collectors.xk6-clickhouse`, via `--config`) > defaults. An
+empty value (empty string, JSON `null`, unset env var) leaves a
+lower-priority source's value in place — it never resets a field to `""`.
 
-## Priority Order
+An unknown `--out` query parameter or JSON key fails startup, listing valid
+keys. An unknown `K6_CLICKHOUSE_*` env var only logs a warning and is
+ignored.
 
-Highest to lowest:
+## The `--out` argument
 
-1. Environment variables (`K6_CLICKHOUSE_*`)
-2. URL parameters (e.g., `--out xk6-clickhouse=...?param=value`)
-3. JSON config file (`collectors.xk6-clickhouse` section, passed via `--config`)
-4. Default values
+A ClickHouse DSN:
+`[clickhouse://][user[:password]@]host:port[/database][?option=value&...]`.
+A bare `host:port` is accepted (`clickhouse://` is assumed); any other scheme
+is rejected. Query options override the userinfo/path for the same key.
+Percent-encode `#` and other reserved characters in a password (`#` →
+`%23`).
 
-## Connection Options
+```bash
+# bare host
+--out xk6-clickhouse=localhost:9000
 
-| Option | Environment Variable | URL Param | Default          | Description                                       |
-| ------ | -------------------- | --------- | ---------------- | ------------------------------------------------- |
-| `addr` | `K6_CLICKHOUSE_ADDR` | (positional, e.g. `--out xk6-clickhouse=host:port`) | `localhost:9000` | ClickHouse server address. Set as the positional value of the `--out` argument, not as a `?addr=` query parameter. |
-| `user` | `K6_CLICKHOUSE_USER` | `user` | `default` | Database username |
-| `password` | `K6_CLICKHOUSE_PASSWORD` | `password` | `""` | Database password |
-| `database` | `K6_CLICKHOUSE_DB` | `database` | `k6` | Database name |
-| `table` | `K6_CLICKHOUSE_TABLE` | `table` | `samples` | Table name |
-| `pushInterval` | `K6_CLICKHOUSE_PUSH_INTERVAL` | `pushInterval` | `1s` | Flush interval (e.g., "1s", "500ms") |
+# full DSN: credentials + database
+--out xk6-clickhouse=clickhouse://alice:s3cret@dbhost:9000/analytics
 
-> **Note**: With TLS enabled, use port `9440` instead of `9000`.
+# DSN + query options
+--out "xk6-clickhouse=clickhouse://dbhost:9000?schemaMode=compatible&bufferMaxSamples=50000"
+```
 
-## Schema Options
+## Options
 
-| Option               | Environment Variable                 | URL Param            | Default  | Description                            |
-| -------------------- | ------------------------------------ | -------------------- | -------- | -------------------------------------- |
-| `schemaMode`         | `K6_CLICKHOUSE_SCHEMA_MODE`          | `schemaMode`         | `simple` | Schema mode: `simple` or `compatible`  |
-| `skipSchemaCreation` | `K6_CLICKHOUSE_SKIP_SCHEMA_CREATION` | `skipSchemaCreation` | `false`  | Skip automatic database/table creation |
+| Group | Option | Env var | Default | Description |
+| --- | --- | --- | --- | --- |
+| Connection | `addr` | `K6_CLICKHOUSE_ADDR` | `localhost:9000` | Address (`host:port`); also a query/JSON key, overriding the DSN host |
+| Connection | `user` | `K6_CLICKHOUSE_USER` | `default` | Username |
+| Connection | `password` | `K6_CLICKHOUSE_PASSWORD` | `""` | Password |
+| Connection | `database` | `K6_CLICKHOUSE_DB` | `k6` | Database name |
+| Connection | `table` | `K6_CLICKHOUSE_TABLE` | `samples` | Table name |
+| Connection | `pushInterval` | `K6_CLICKHOUSE_PUSH_INTERVAL` | `1s` | Flush interval (Go duration, e.g. `500ms`) |
+| Schema | `schemaMode` | `K6_CLICKHOUSE_SCHEMA_MODE` | `simple` | `simple` or `compatible` ([Schema System](./schemas.md)) |
+| Schema | `skipSchemaCreation` | `K6_CLICKHOUSE_SKIP_SCHEMA_CREATION` | `false` | Skip automatic `CREATE DATABASE`/`TABLE` |
+| TLS | `tlsEnabled` | `K6_CLICKHOUSE_TLS_ENABLED` | `false` | Enable TLS |
+| TLS | `tlsInsecureSkipVerify` | `K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY` | `false` | Skip certificate verification (testing only) |
+| TLS | `tlsCAFile` | `K6_CLICKHOUSE_TLS_CA_FILE` | `""` | CA certificate file, appended to the system pool |
+| TLS | `tlsCertFile` | `K6_CLICKHOUSE_TLS_CERT_FILE` | `""` | Client certificate file (mTLS, with `tlsKeyFile`) |
+| TLS | `tlsKeyFile` | `K6_CLICKHOUSE_TLS_KEY_FILE` | `""` | Client key file (mTLS, with `tlsCertFile`) |
+| TLS | `tlsServerName` | `K6_CLICKHOUSE_TLS_SERVER_NAME` | `""` | SNI server name |
+| Retry | `retryAttempts` | `K6_CLICKHOUSE_RETRY_ATTEMPTS` | `3` | Max retries after the initial attempt (`0` disables; max `100`) |
+| Retry | `retryDelay` | `K6_CLICKHOUSE_RETRY_DELAY` | `100ms` | Initial retry delay, doubled each attempt |
+| Retry | `retryMaxDelay` | `K6_CLICKHOUSE_RETRY_MAX_DELAY` | `5s` | Cap on the exponential backoff delay |
+| Buffer | `bufferEnabled` | `K6_CLICKHOUSE_BUFFER_ENABLED` | `true` | Keep samples from a failed flush in memory for retry |
+| Buffer | `bufferMaxSamples` | `K6_CLICKHOUSE_BUFFER_MAX_SAMPLES` | `100000` | Max buffered samples |
+| Buffer | `bufferDropPolicy` | `K6_CLICKHOUSE_BUFFER_DROP_POLICY` | `oldest` | Overflow policy: `oldest` or `newest` |
 
-## Retry Options
+In JSON, TLS options may nest under a `tls` object (`enabled`,
+`insecureSkipVerify`, `caFile`, `certFile`, `keyFile`, `serverName`) instead
+of the flat `tlsXxx` keys — not both. Values may be a string, number, or
+boolean for any option:
 
-| Option          | Environment Variable            | URL Param       | Default | Description                       |
-| --------------- | ------------------------------- | --------------- | ------- | --------------------------------- |
-| `retryAttempts` | `K6_CLICKHOUSE_RETRY_ATTEMPTS`  | `retryAttempts` | `3`     | Max retry attempts (0 to disable) |
-| `retryDelay`    | `K6_CLICKHOUSE_RETRY_DELAY`     | `retryDelay`    | `100ms` | Initial delay between retries     |
-| `retryMaxDelay` | `K6_CLICKHOUSE_RETRY_MAX_DELAY` | `retryMaxDelay` | `5s`    | Maximum delay cap                 |
+```json
+{
+  "collectors": {
+    "xk6-clickhouse": {
+      "addr": "dbhost:9000",
+      "schemaMode": "compatible",
+      "retryAttempts": 5,
+      "tls": { "enabled": true, "certFile": "/certs/client.pem", "keyFile": "/certs/client.key" }
+    }
+  }
+}
+```
 
-Uses exponential backoff, capped at `retryMaxDelay`.
+Equivalently via env: `K6_CLICKHOUSE_ADDR=dbhost:9000
+K6_CLICKHOUSE_TLS_ENABLED=true k6 run --out xk6-clickhouse script.js`.
 
-## Buffer Options
+> With TLS enabled, use ClickHouse's native TLS port `9440`, not `9000` (a
+> warning is logged otherwise).
 
-| Option             | Environment Variable               | URL Param          | Default  | Description                           |
-| ------------------ | ---------------------------------- | ------------------ | -------- | ------------------------------------- |
-| `bufferEnabled`    | `K6_CLICKHOUSE_BUFFER_ENABLED`     | `bufferEnabled`    | `true`   | Enable in-memory buffering            |
-| `bufferMaxSamples` | `K6_CLICKHOUSE_BUFFER_MAX_SAMPLES` | `bufferMaxSamples` | `10000`  | Max samples to buffer                 |
-| `bufferDropPolicy` | `K6_CLICKHOUSE_BUFFER_DROP_POLICY` | `bufferDropPolicy` | `oldest` | Overflow policy: `oldest` or `newest` |
+## Notes
 
-## TLS Options
+- **Booleans** use Go's `strconv.ParseBool` (`1`, `t`, `true`, `TRUE`, `0`,
+  `f`, `false`); anything else fails at startup.
+- **TLS**: cert/key/CA files without `tlsEnabled=true` are ignored (with a
+  warning) — they don't implicitly enable TLS. Cert and key must be set
+  together, and are read/parsed at startup, so a bad file fails before the
+  test runs. `tlsInsecureSkipVerify=true` also ignores the CA file and
+  `serverName`.
+- **Retry**: `retryAttempts` > 100 is rejected. With retries enabled and a
+  non-zero `retryDelay`, `retryMaxDelay` must be positive and `>= retryDelay`.
+- **Buffer**: `bufferMaxSamples` must be positive when `bufferEnabled=true`.
+  On overflow, `oldest` drops the oldest buffered samples (keeps the most
+  recent); `newest` drops incoming samples instead (keeps what's buffered).
 
-| Option                   | Environment Variable                     | URL Param               | Default | Description                           |
-| ------------------------ | ---------------------------------------- | ----------------------- | ------- | ------------------------------------- |
-| `tls.enabled`            | `K6_CLICKHOUSE_TLS_ENABLED`              | `tlsEnabled`            | `false` | Enable TLS/SSL                        |
-| `tls.insecureSkipVerify` | `K6_CLICKHOUSE_TLS_INSECURE_SKIP_VERIFY` | `tlsInsecureSkipVerify` | `false` | Skip cert verification (testing only) |
-| `tls.caFile`             | `K6_CLICKHOUSE_TLS_CA_FILE`              | `tlsCAFile`             | `""`    | CA certificate file path              |
-| `tls.certFile`           | `K6_CLICKHOUSE_TLS_CERT_FILE`            | `tlsCertFile`           | `""`    | Client certificate for mTLS           |
-| `tls.keyFile`            | `K6_CLICKHOUSE_TLS_KEY_FILE`             | `tlsKeyFile`            | `""`    | Client key for mTLS                   |
-| `tls.serverName`         | `K6_CLICKHOUSE_TLS_SERVER_NAME`          | `tlsServerName`         | `""`    | Server name for SNI                   |
+## Schema creation
 
-> **Boolean values**: all boolean options (`tlsEnabled`, `skipSchemaCreation`,
-> `bufferEnabled`, …) are parsed with Go's `strconv.ParseBool`, so `1`, `t`,
-> `true`, `TRUE`, `0`, `f`, `false` are all accepted. Any other value is rejected
-> at startup with a clear error rather than being silently treated as `false`.
+The output runs `CREATE DATABASE IF NOT EXISTS` and `CREATE TABLE IF NOT
+EXISTS` once at startup — create-only, it never `ALTER`s an existing table.
+Changing `schemaMode` against an existing table does not migrate its columns;
+point at a new table instead. With `skipSchemaCreation=true`, the database
+and table must already exist with the exact columns of the selected schema
+(see [Schema System](./schemas.md)).
 
-> **TLS material requires `tlsEnabled`**: setting `tls.caFile`/`certFile`/`keyFile`
-> without enabling TLS does **not** implicitly enable it — the files are ignored
-> and a warning is logged. Always set `tlsEnabled=true` (or
-> `K6_CLICKHOUSE_TLS_ENABLED=true`). When `tlsInsecureSkipVerify=true`, the CA file
-> and `serverName` are ignored (verification is fully disabled).
+## Delivery and buffering
 
-> **Retry bounds**: `retryAttempts` is capped (max 100) and rejected above that to
-> avoid a misconfiguration stalling flushes and shutdown. When retries are enabled
-> with a non-zero `retryDelay`, `retryMaxDelay` must be positive so exponential
-> backoff stays bounded.
+Delivery is at-least-once, not exactly-once:
 
-## Schema Creation & Migration
+- Retryable failures (connection refused/reset, timeouts, EOF, network
+  errors) get exponential backoff up to `retryAttempts`. One failed row
+  aborts the whole batch, retried as a unit.
+- Commit errors are ambiguous (data may already be persisted), so they're
+  never retried or re-buffered; de-duplicate at query time (e.g.
+  `ReplacingMergeTree`) if exact counts matter.
+- Conversion errors drop only the bad sample; the rest of the batch commits.
+- If retries are exhausted and `bufferEnabled=true` (default), the batch is
+  kept in memory (`bufferMaxSamples` cap, `bufferDropPolicy` on overflow) and
+  retried first next flush; with `bufferEnabled=false` it's dropped
+  immediately. Flushes run one at a time, so a slow one just delays the next
+  tick rather than overlapping it. `Stop()` gives buffered samples one more
+  drain attempt with a fresh 30-second deadline; anything still undrained is
+  dropped.
 
-By default the output runs `CREATE DATABASE IF NOT EXISTS` and `CREATE TABLE IF
-NOT EXISTS` on `Start()`. This is **create-only** — it never `ALTER`s an existing
-table. Consequences:
+## Observability
 
-- Switching `schemaMode` against a table that already exists will **not** migrate
-  its columns; point the output at a new table (or drop the old one) instead.
-- With `skipSchemaCreation=true`, the database and table must already exist with
-  the exact columns and order of the selected schema (see [Schema System](./schemas.md)),
-  or inserts will fail.
-
-## Delivery Semantics & Resilience
-
-Delivery is **at-least-once**, not exactly-once:
-
-- **Retryable failures** (connection refused/reset, timeouts, EOF, network errors)
-  are retried with exponential backoff up to `retryAttempts`.
-- **Commit errors** are treated as ambiguous — the server may have already
-  persisted the batch — so they are **not** retried and the samples are **not**
-  re-buffered, to avoid duplicate inserts. A network drop between persistence and
-  acknowledgement can therefore produce duplicates; de-duplicate at query time
-  (e.g. with `ReplacingMergeTree` or `GROUP BY`) if exact counts matter.
-- **Conversion errors** (e.g. a non-numeric `buildId`/`status` tag under the
-  compatible schema) drop only the offending sample; the rest of the batch still
-  commits.
-- A single failed row insert aborts the **whole** current batch (which is then
-  retried/buffered as a unit).
-
-## Outage Behavior & Buffering
-
-When `bufferEnabled=true` (default), samples from a failed flush are pushed into an
-in-memory ring buffer and replayed on the next successful flush:
-
-- **Capacity** is `bufferMaxSamples` sample containers. On overflow, `bufferDropPolicy`
-  decides what to drop: `oldest` (keep the most recent data) or `newest` (keep the
-  data from the start of the outage). Dropped containers are counted (see below).
-- Overlapping flush cycles are skipped while a previous flush is still retrying, so
-  a struggling ClickHouse is not amplified.
-- On `Stop()`, the buffer is drained with a fresh 30-second deadline, retried with
-  the same backoff policy as a normal flush. Anything still undrained at the end of
-  that window is lost and counted as dropped.
-- With `bufferEnabled=false`, samples from any failed flush are **lost immediately**
-  (logged, not retried).
-
-## Observability & Monitoring
-
-The output maintains cumulative counters — `samplesProcessed`, `convertErrors`,
-`insertErrors`, `retryAttempts`, `flushFailures`, `droppedSamples`, plus the current
-`bufferedSamples` depth. These are **log-only**: a single summary line is logged at
-`Stop()`, and retry/buffer/drop events are logged as they happen (enable debug
-logging to see the per-flush detail). They are **not** emitted as queryable k6
-metrics. Watch for `flushFailures`/`droppedSamples` climbing as the signal that
-ClickHouse can't keep up — increase `bufferMaxSamples` or `pushInterval`, or fix
-the connection.
+At `Stop()` the output logs one summary line (`ClickHouse output stopped`)
+with cumulative counters `samplesProcessed`, `convertErrors`, `insertErrors`,
+`retryAttempts`, `flushFailures`, `droppedSamples` — at `Warn` if anything
+was dropped or failed, `Info` otherwise. Retry/buffer/drop events are also
+logged as they happen (enable debug logging for per-flush detail). None of
+this is exposed as k6 metrics; watch the logs, or increase
+`bufferMaxSamples`/`pushInterval` if `flushFailures`/`droppedSamples` climb.
