@@ -34,6 +34,31 @@ func (m *mockSampleContainer) GetSamples() []metrics.Sample {
 	return m.samples
 }
 
+// newSample builds a metrics.Sample named name with the given type and
+// value. A nil tags map produces a sample with a nil TagSet, matching what
+// k6 emits for a sample with no tags; a non-nil map is applied to a fresh
+// registry's root TagSet.
+func newSample(t testing.TB, name string, typ metrics.MetricType, value float64, tags map[string]string) metrics.Sample {
+	t.Helper()
+
+	registry := metrics.NewRegistry()
+	metric := registry.MustNewMetric(name, typ)
+
+	var tagSet *metrics.TagSet
+	if tags != nil {
+		tagSet = registry.RootTagSet().WithTagsFromMap(tags)
+	}
+
+	return metrics.Sample{
+		TimeSeries: metrics.TimeSeries{
+			Metric: metric,
+			Tags:   tagSet,
+		},
+		Time:  time.Now(),
+		Value: value,
+	}
+}
+
 // newTestLogger creates a logrus logger for testing that discards output.
 func newTestLogger(t testing.TB) logrus.FieldLogger {
 	t.Helper()
