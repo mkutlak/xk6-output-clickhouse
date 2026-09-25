@@ -47,9 +47,8 @@ type Output struct {
 	periodicFlusher *output.PeriodicFlusher
 	insertQuery     string // Pre-computed INSERT query
 
-	// Schema implementation (selected by schemaMode config)
-	schema    SchemaCreator
-	converter SampleConverter
+	// Schema selected by the schemaMode config
+	schema Schema
 
 	// Concurrency control
 	mu      sync.RWMutex
@@ -144,7 +143,7 @@ func (o *Output) Start() error {
 	}
 
 	// Create cancellable context for graceful shutdown
-	o.shutdownCtx, o.shutdownCancel = context.WithCancel(context.Background())
+	o.shutdownCtx, o.shutdownCancel = context.WithCancel(context.Background()) // #nosec G118 -- shutdownCancel is called in Stop()
 
 	o.logger.Debug("Starting ClickHouse output")
 
@@ -179,18 +178,22 @@ func (o *Output) Start() error {
 	o.logger.Debug("Connected to ClickHouse")
 
 	// Get schema implementation from registry
-	impl, err := GetSchema(o.config.SchemaMode)
+	schema, err := getSchema(o.config.SchemaMode)
 	if err != nil {
 		return fmt.Errorf("failed to get schema implementation: %w", err)
 	}
-	o.schema = impl.Schema
-	o.converter = impl.Converter
+	o.schema = schema
 	o.logger.WithField("schemaMode", o.config.SchemaMode).Debug("Using schema implementation")
 
-	// Create schema if not skipped
+	table := escapeIdentifier(o.config.Database) + "." + escapeIdentifier(o.config.Table)
+
+	// Create database and table if not skipped
 	if !o.config.SkipSchemaCreation {
-		if err := o.schema.CreateSchema(o.shutdownCtx, db, o.config.Database, o.config.Table); err != nil {
-			return err
+		if _, err := db.ExecContext(o.shutdownCtx, "CREATE DATABASE IF NOT EXISTS "+escapeIdentifier(o.config.Database)); err != nil {
+			return fmt.Errorf("failed to create database: %w", err)
+		}
+		if _, err := db.ExecContext(o.shutdownCtx, schema.CreateTable(table)); err != nil {
+			return fmt.Errorf("failed to create table: %w", err)
 		}
 		o.logger.Debug("Schema created")
 	} else {
@@ -198,7 +201,7 @@ func (o *Output) Start() error {
 	}
 
 	// Pre-compute INSERT query from schema implementation
-	o.insertQuery = o.schema.InsertQuery(o.config.Database, o.config.Table)
+	o.insertQuery = schema.InsertQuery(table)
 
 	// Initialize failover buffer if enabled
 	if o.config.BufferEnabled {
@@ -553,7 +556,7 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 	o.mu.RLock()
 	db := o.db
 	insertQuery := o.insertQuery
-	converter := o.converter
+	schema := o.schema
 	logger := o.logger
 	o.mu.RUnlock()
 
@@ -612,8 +615,8 @@ func (o *Output) doFlush(ctx context.Context, samples []metrics.SampleContainer)
 				}
 			}
 
-			// Convert sample using the schema's converter
-			row, convErr := converter.Convert(ctx, sample)
+			// Convert sample into a row for the schema
+			row, convErr := schema.Row(sample)
 			if convErr != nil {
 				flushConvertErrors++
 				logger.WithError(convErr).Warn("Failed to convert sample")

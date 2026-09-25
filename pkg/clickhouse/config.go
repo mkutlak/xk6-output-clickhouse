@@ -214,8 +214,8 @@ func (c Config) Validate() error {
 	}
 
 	// Validate schema mode against registered implementations
-	if _, err := GetSchema(c.SchemaMode); err != nil {
-		return fmt.Errorf("invalid schemaMode: %s (available: %v)", c.SchemaMode, AvailableSchemas())
+	if _, err := getSchema(c.SchemaMode); err != nil {
+		return fmt.Errorf("invalid schemaMode: %s (available: %v)", c.SchemaMode, availableSchemas())
 	}
 
 	// Validate TLS configuration

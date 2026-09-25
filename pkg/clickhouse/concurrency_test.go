@@ -55,7 +55,7 @@ func TestConcurrentAddMetricSamples(t *testing.T) {
 	_ = buffered
 }
 
-func TestConcurrentConvertToSimple(t *testing.T) {
+func TestConcurrentSimpleSchemaRow(t *testing.T) {
 	t.Parallel()
 
 	numGoroutines := 50
@@ -86,8 +86,12 @@ func TestConcurrentConvertToSimple(t *testing.T) {
 			}
 
 			for range 100 {
-				ss := convertToSimple(sample)
-				if ss.Metric != "http_reqs" {
+				row, err := simpleSchema{}.Row(sample)
+				if err != nil {
+					errors <- err
+					return
+				}
+				if row[1] != "http_reqs" {
 					errors <- assert.AnError
 					return
 				}
@@ -103,7 +107,7 @@ func TestConcurrentConvertToSimple(t *testing.T) {
 	}
 }
 
-func TestConcurrentConvertToCompatible(t *testing.T) {
+func TestConcurrentCompatSchemaRow(t *testing.T) {
 	t.Parallel()
 
 	numGoroutines := 50
@@ -134,12 +138,12 @@ func TestConcurrentConvertToCompatible(t *testing.T) {
 			}
 
 			for range 100 {
-				cs, err := convertToCompatible(sample, 12345)
+				row, err := compatSchema{defaultBuildID: 12345}.Row(sample)
 				if err != nil {
 					errors <- err
 					return
 				}
-				if cs.Metric != "http_reqs" {
+				if row[1] != "http_reqs" {
 					errors <- assert.AnError
 					return
 				}
@@ -347,7 +351,7 @@ func TestErrorMetrics_Concurrency(t *testing.T) {
 
 // Benchmarks
 
-func BenchmarkConcurrentConvertToSimple(b *testing.B) {
+func BenchmarkConcurrentSimpleSchemaRow(b *testing.B) {
 	registry := metrics.NewRegistry()
 	metric := registry.MustNewMetric("http_req_duration", metrics.Trend)
 	tags := registry.RootTagSet().WithTagsFromMap(map[string]string{
@@ -367,8 +371,10 @@ func BenchmarkConcurrentConvertToSimple(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			ss := convertToSimple(sample)
-			_ = ss
+			if _, err := (simpleSchema{}).Row(sample); err != nil {
+				b.Error(err)
+				return
+			}
 		}
 	})
 }

@@ -2,72 +2,67 @@ package clickhouse
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"sync"
+
+	"go.k6.io/k6/v2/metrics"
 )
 
-// schemaRegistry holds all registered schema implementations.
-// Protected by mutex to allow registration during init().
+// Schema defines a table layout and how k6 samples map onto it.
+type Schema interface {
+	// CreateTable returns a CREATE TABLE IF NOT EXISTS statement for table,
+	// which is passed already quoted as `database`.`table`.
+	CreateTable(table string) string
+	// InsertQuery returns an INSERT statement for table with one ? per column.
+	InsertQuery(table string) string
+	// Row converts a sample into column values, in InsertQuery column order.
+	Row(sample metrics.Sample) ([]any, error)
+}
+
+// schemaRegistry holds all registered schemas, keyed by schemaMode name.
 var (
-	schemaRegistry   = make(map[string]SchemaImplementation)
+	schemaRegistry   = make(map[string]Schema)
 	schemaRegistryMu sync.RWMutex
 )
 
-// RegisterSchema registers a schema implementation by name.
-// Call this in init() to register custom schemas.
+// RegisterSchema makes a schema selectable through the schemaMode option.
+// Call it from init(); registering an existing name replaces that schema.
 //
 // Example:
 //
 //	func init() {
-//	    clickhouse.RegisterSchema(clickhouse.SchemaImplementation{
-//	        Name:      "custom",
-//	        Schema:    MyCustomSchema{},
-//	        Converter: MyCustomConverter{},
-//	    })
+//	    clickhouse.RegisterSchema("custom", MySchema{})
 //	}
-func RegisterSchema(impl SchemaImplementation) {
+func RegisterSchema(name string, s Schema) {
+	if name == "" {
+		panic("schema name cannot be empty")
+	}
+	if s == nil {
+		panic(fmt.Sprintf("schema %q is nil", name))
+	}
+
 	schemaRegistryMu.Lock()
 	defer schemaRegistryMu.Unlock()
-
-	if impl.Name == "" {
-		panic("schema implementation name cannot be empty")
-	}
-	if impl.Schema == nil {
-		panic(fmt.Sprintf("schema implementation %q has nil Schema", impl.Name))
-	}
-	if impl.Converter == nil {
-		panic(fmt.Sprintf("schema implementation %q has nil Converter", impl.Name))
-	}
-
-	schemaRegistry[impl.Name] = impl
+	schemaRegistry[name] = s
 }
 
-// GetSchema returns a registered schema implementation by name.
-// Returns an error if the schema is not found.
-func GetSchema(name string) (SchemaImplementation, error) {
+// getSchema returns the schema registered under name.
+func getSchema(name string) (Schema, error) {
+	schemaRegistryMu.RLock()
+	s, ok := schemaRegistry[name]
+	schemaRegistryMu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("unknown schema: %q (available: %v)", name, availableSchemas())
+	}
+	return s, nil
+}
+
+// availableSchemas returns all registered schema names in sorted order.
+func availableSchemas() []string {
 	schemaRegistryMu.RLock()
 	defer schemaRegistryMu.RUnlock()
 
-	if impl, ok := schemaRegistry[name]; ok {
-		return impl, nil
-	}
-	return SchemaImplementation{}, fmt.Errorf("unknown schema: %q (available: %v)", name, availableSchemasLocked())
-}
-
-// AvailableSchemas returns all registered schema names in sorted order.
-func AvailableSchemas() []string {
-	schemaRegistryMu.RLock()
-	defer schemaRegistryMu.RUnlock()
-
-	return availableSchemasLocked()
-}
-
-// availableSchemasLocked returns schema names without acquiring lock (caller must hold lock)
-func availableSchemasLocked() []string {
-	names := make([]string, 0, len(schemaRegistry))
-	for name := range schemaRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(schemaRegistry))
 }
