@@ -127,4 +127,4 @@ k6 samples → AddMetricSamples (k6's output.SampleBuffer) → PeriodicFlusher c
 - Adding a config option means updating the `options` table in `config.go` *and* the Options table in `docs/configuration.md` by hand — nothing enforces they stay in sync.
 - `config.go` reads env vars from `params.Environment` (a map passed into `New`), not `os.Getenv` — config tests build that map directly, so they don't need `t.Setenv` and freely use `t.Parallel()`.
 - Bumping `.xk6-version` needs no other file changes: `Makefile`, `ci.yaml`'s build-check job and `main.yaml`'s image build all read the file directly. README's quickstart intentionally hardcodes `xk6@latest`, with its own note to pin a tag for reproducible builds.
-- `golangci-lint`'s version is pinned in two places that must be bumped together: `Makefile`'s `GOLANGCI_LINT_VERSION` and `validate.yaml`'s `golangci-lint-action` `version:` (both currently `v2.14.0`).
+- `golangci-lint`'s version is pinned in two places that must be bumped together: `Makefile`'s `GOLANGCI_LINT_VERSION` and `validate.yaml`'s `golangci-lint-action` `version:` (both currently `v2.15.0`).
