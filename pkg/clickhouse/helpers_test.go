@@ -16,7 +16,7 @@ import (
 
 // Test constants for ClickHouse container configuration.
 const (
-	testClickHouseImage  = "clickhouse/clickhouse-server:26.3-alpine"
+	testClickHouseImage  = "clickhouse/clickhouse-server:26.10-alpine"
 	testUsername         = "default"
 	testPassword         = "password"
 	testDatabase         = "default"

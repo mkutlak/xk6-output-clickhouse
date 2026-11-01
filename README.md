@@ -30,7 +30,7 @@ version from [`.xk6-version`](.xk6-version) that CI tests with. From a clone,
 ### 2. Start ClickHouse
 
 ```bash
-docker run -d --name clickhouse -p 9000:9000 -e CLICKHOUSE_PASSWORD=password clickhouse/clickhouse-server:26.3-alpine
+docker run -d --name clickhouse -p 9000:9000 -e CLICKHOUSE_PASSWORD=password clickhouse/clickhouse-server:26.10-alpine
 ```
 
 A password is required: the official image rejects passwordless network
@@ -109,7 +109,7 @@ lose that batch. See
 
 - **`Code: 516`, authentication failed**: the server requires a password and
   your DSN must carry one for the `default` user. Reproduced against
-  `clickhouse/clickhouse-server:26.3-alpine` with no password: `Code: 516.
+  `clickhouse/clickhouse-server:26.10-alpine` with no password: `Code: 516.
   DB::Exception: ... Authentication failed: password is incorrect, or there
   is no user with such name`.
 - **Wrong port**: 8123 is ClickHouse's HTTP interface; this extension speaks

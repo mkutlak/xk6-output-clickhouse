@@ -14,7 +14,7 @@ services:
   # ClickHouse — Metrics storage
   # ---------------------------------------------------------------------------
   clickhouse:
-    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-26.3-alpine}
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-26.10-alpine}
     container_name: xk6-clickhouse
     ports:
       - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
@@ -45,7 +45,7 @@ services:
   # Grafana — Dashboards & visualization
   # ---------------------------------------------------------------------------
   grafana:
-    image: grafana/grafana:${GRAFANA_VERSION:-12.3}
+    image: grafana/grafana:${GRAFANA_VERSION:-13.3}
     container_name: xk6-grafana
     profiles:
       - dev
@@ -133,7 +133,7 @@ services:
   # test-validator — Validates k6 data landed in ClickHouse
   # ---------------------------------------------------------------------------
   test-validator:
-    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-26.3-alpine}
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-26.10-alpine}
     container_name: xk6-test-validator
     profiles:
       - test
