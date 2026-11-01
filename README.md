@@ -143,6 +143,7 @@ the custom schema API changed and `bufferMaxSamples` now counts samples.
 - [Examples](./examples/)
 - [Development & Contributing](./CONTRIBUTING.md)
 - [CHANGELOG](./CHANGELOG.md)
+- [Security Policy](./docs/SECURITY.md)
 
 ## License
 
