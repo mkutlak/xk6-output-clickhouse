@@ -1,4 +1,4 @@
-.PHONY: build clean test test-unit test-coverage fmt lint vet modernize tidy check update install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-dev docker-test docker-clean-all help all
+.PHONY: build clean test test-unit test-coverage fmt lint vet vuln modernize tidy check update install-tools docker-build docker-clean docker-compose-up docker-compose-down docker-compose-logs docker-dev docker-test docker-clean-all help all
 
 # Project variables
 REPO_OWNER ?= mkutlak
@@ -7,6 +7,7 @@ EXTENSION_MODULE ?= github.com/$(REPO_OWNER)/$(REPO_NAME)
 XK6_VERSION ?= $(shell cat .xk6-version 2>/dev/null || echo latest)
 export XK6_VERSION
 GOLANGCI_LINT_VERSION ?= v2.15.0
+GOVULNCHECK_VERSION ?= v1.9.0
 
 # CI/CD variables
 IMAGE_NAME ?= ghcr.io/$(REPO_OWNER)/$(REPO_NAME)
@@ -51,6 +52,11 @@ lint:
 	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Run 'make install-tools' to install it." && exit 1)
 	@golangci-lint run ./...
 
+# Scan code and dependencies for known vulnerabilities
+vuln:
+	@echo "Running govulncheck..."
+	@go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
 # Run go vet
 vet:
 	@echo "Running go vet..."
@@ -72,9 +78,9 @@ update:
 	@go get -u ./...
 	@go mod tidy
 
-# Run fmt, vet, tidy, a go-fix modernization diff check, and tests (mirrors CI's
+# Run fmt, vet, tidy, govulncheck, a go-fix modernization diff check, and tests (mirrors CI's
 # validate job, minus lint — run 'make lint' separately)
-check: fmt vet tidy test
+check: fmt vet tidy vuln test
 	@echo "Checking go modernization (go fix -diff)..."
 	@diff="$$(go fix -diff ./...)"; \
 	if [ -n "$$diff" ]; then \
@@ -162,10 +168,11 @@ help:
 	@echo "  make fmt                  - Format code"
 	@echo "  make lint                 - Run golangci-lint"
 	@echo "  make vet                  - Run go vet"
+	@echo "  make vuln                 - Scan for known vulnerabilities (govulncheck)"
 	@echo "  make modernize            - Apply Go modernizers (go fix)"
 	@echo "  make tidy                 - Tidy go.mod and go.sum"
 	@echo "  make update               - Update dependencies to latest versions"
-	@echo "  make check                - Run fmt, vet, tidy, modernization diff, and tests"
+	@echo "  make check                - Run fmt, vet, tidy, vuln, modernization diff, and tests"
 	@echo "  make clean                - Remove build artifacts"
 	@echo "  make install-tools        - Install development tools"
 	@echo "  make all                  - Run checks and build (default)"

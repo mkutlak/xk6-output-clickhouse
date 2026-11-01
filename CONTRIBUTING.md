@@ -29,7 +29,7 @@ make build   # -> ./bin/k6
 
 ## Checks
 
-- `make check` — fmt, vet, tidy, a `go fix -diff` modernization gate, then tests
+- `make check` — fmt, vet, tidy, govulncheck, a `go fix -diff` modernization gate, then tests
 - `make lint` — golangci-lint v2 (`make install-tools` installs the pinned version)
 
 Both must pass before opening a pull request. Run `make help` for the full target list.

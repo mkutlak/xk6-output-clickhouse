@@ -2,6 +2,8 @@ module github.com/mkutlak/xk6-output-clickhouse
 
 go 1.26.4
 
+toolchain go1.26.10
+
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.50.0
 	github.com/avast/retry-go/v4 v4.7.0

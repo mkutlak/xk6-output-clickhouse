@@ -65,6 +65,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check for known vulnerabilities
+        run: make vuln
+
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
